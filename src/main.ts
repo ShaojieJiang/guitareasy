@@ -15,9 +15,9 @@ const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
-      <a class="brand" href="/" aria-label="guitareasy home">
+      <a class="brand" href="/" aria-label="GuitarEasy home">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
-        <span>guitareasy</span>
+        <span>GuitarEasy</span>
       </a>
       <div class="topbar-meta">
         <span class="eyebrow">ALPHATEX PLAYER</span>
