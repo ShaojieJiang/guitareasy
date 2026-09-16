@@ -10,6 +10,17 @@ const demoAlphaTex = String.raw`\\title "Quiet Hours"
 :4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |
 :4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |`
 
+type ThemePreference = 'system' | 'light' | 'dark'
+
+const themeStorageKey = 'guitareasy-theme'
+const sidebarStorageKey = 'guitareasy-sidebar-collapsed'
+const savedTheme = localStorage.getItem(themeStorageKey)
+const initialTheme: ThemePreference = savedTheme === 'light' || savedTheme === 'dark' || savedTheme === 'system'
+  ? savedTheme
+  : 'system'
+
+document.documentElement.dataset.theme = initialTheme
+
 const app = document.querySelector<HTMLDivElement>('#app')!
 
 app.innerHTML = `
@@ -19,9 +30,16 @@ app.innerHTML = `
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
         <span>GuitarEasy</span>
       </a>
-      <div class="topbar-meta">
-        <span class="eyebrow">ALPHATEX PLAYER</span>
-        <span class="status-pill"><span class="status-dot"></span>local workspace</span>
+      <div class="topbar-actions">
+        <div class="topbar-meta">
+          <span class="eyebrow">ALPHATEX PLAYER</span>
+          <span class="status-pill"><span class="status-dot"></span>local workspace</span>
+        </div>
+        <div class="theme-switcher" id="theme-switcher" role="group" aria-label="Colour mode">
+          <button class="theme-option" type="button" data-theme-choice="system" aria-label="Use system colour mode" title="Use system colour mode"><span class="theme-icon" aria-hidden="true">◐</span><span class="theme-label">System</span></button>
+          <button class="theme-option" type="button" data-theme-choice="light" aria-label="Use light colour mode" title="Use light colour mode"><span class="theme-icon" aria-hidden="true">☼</span><span class="theme-label">Light</span></button>
+          <button class="theme-option" type="button" data-theme-choice="dark" aria-label="Use dark colour mode" title="Use dark colour mode"><span class="theme-icon" aria-hidden="true">◑</span><span class="theme-label">Dark</span></button>
+        </div>
       </div>
     </header>
 
@@ -39,7 +57,7 @@ app.innerHTML = `
       </section>
 
       <section class="studio-grid">
-        <aside class="control-panel" aria-label="File controls">
+          <aside class="control-panel" id="control-panel" aria-label="File controls">
           <div class="panel-heading">
             <div>
               <p class="section-kicker">source file</p>
@@ -85,7 +103,13 @@ app.innerHTML = `
               <p class="section-kicker">notation preview</p>
               <h2 id="score-heading">Your score</h2>
             </div>
-            <div class="render-state" id="render-state"><span class="state-dot"></span><span id="render-state-label">ready to render</span></div>
+            <div class="score-toolbar-actions">
+              <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-controls="control-panel" aria-expanded="true" title="Collapse file controls">
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                <span>Controls</span>
+              </button>
+              <div class="render-state" id="render-state"><span class="state-dot"></span><span id="render-state-label">ready to render</span></div>
+            </div>
           </div>
           <div class="notation-viewport" id="notation-viewport">
             <div class="notation-canvas" id="notation-canvas"></div>
@@ -135,10 +159,64 @@ const songTitle = document.querySelector<HTMLElement>('#song-title')!
 const songArtist = document.querySelector<HTMLElement>('#song-artist')!
 const songPosition = document.querySelector<HTMLElement>('#song-position')!
 const progressFill = document.querySelector<HTMLSpanElement>('#progress-fill')!
+const themeSwitcher = document.querySelector<HTMLDivElement>('#theme-switcher')!
+const themeOptions = Array.from(themeSwitcher.querySelectorAll<HTMLButtonElement>('[data-theme-choice]'))
+const sidebarToggle = document.querySelector<HTMLButtonElement>('#sidebar-toggle')!
+const studioGrid = document.querySelector<HTMLElement>('.studio-grid')!
 
 let api: alphaTab.AlphaTabApi
 let loadedName = 'Quiet Hours.alphatex'
 let isPlayerReady = false
+let themePreference = initialTheme
+
+function getResolvedTheme() {
+  if (themePreference !== 'system') return themePreference
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
+function updateThemeColor() {
+  const themeColor = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+  if (themeColor) themeColor.content = getResolvedTheme() === 'light' ? '#f2f3f1' : '#11131a'
+}
+
+function applyTheme(theme: ThemePreference) {
+  themePreference = theme
+  document.documentElement.dataset.theme = theme
+  themeOptions.forEach((option) => {
+    const isSelected = option.dataset.themeChoice === theme
+    option.classList.toggle('is-selected', isSelected)
+    option.setAttribute('aria-pressed', String(isSelected))
+  })
+  localStorage.setItem(themeStorageKey, theme)
+  updateThemeColor()
+}
+
+function applySidebarState(collapsed: boolean) {
+  studioGrid.classList.toggle('is-sidebar-collapsed', collapsed)
+  sidebarToggle.setAttribute('aria-expanded', String(!collapsed))
+  sidebarToggle.title = collapsed ? 'Show file controls' : 'Collapse file controls'
+  sidebarToggle.querySelector('span')!.textContent = collapsed ? 'Show controls' : 'Controls'
+}
+
+applyTheme(initialTheme)
+applySidebarState(localStorage.getItem(sidebarStorageKey) === 'true')
+
+themeSwitcher.addEventListener('click', (event) => {
+  const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-theme-choice]')
+  const nextTheme = target?.dataset.themeChoice
+  if (nextTheme === 'system' || nextTheme === 'light' || nextTheme === 'dark') applyTheme(nextTheme)
+})
+
+sidebarToggle.addEventListener('click', () => {
+  const collapsed = !studioGrid.classList.contains('is-sidebar-collapsed')
+  applySidebarState(collapsed)
+  localStorage.setItem(sidebarStorageKey, String(collapsed))
+})
+
+const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: light)')
+colorSchemeQuery.addEventListener('change', () => {
+  if (themePreference === 'system') updateThemeColor()
+})
 
 function formatDuration(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
@@ -232,6 +310,9 @@ api = new alphaTab.AlphaTabApi(notationCanvas, {
   },
   player: {
     enablePlayer: true,
+    enableCursor: true,
+    enableAnimatedBeatCursor: true,
+    enableElementHighlighting: true,
     soundFont: '/soundfont/sonivox.sf2',
     scrollElement: notationViewport,
   },
@@ -261,7 +342,14 @@ api.playerReady.on(() => {
   stop.disabled = false
   setRenderState('ready')
 })
-api.playerStateChanged.on((event) => updatePlayButton(event.state))
+api.playerStateChanged.on((event) => {
+  updatePlayButton(event.state)
+  if (event.state === alphaTab.synth.PlayerState.Playing) {
+    setRenderState('playing now')
+  } else if (isPlayerReady) {
+    setRenderState('ready')
+  }
+})
 api.playerPositionChanged.on((event) => {
   songPosition.textContent = `${formatDuration(event.currentTime)} / ${formatDuration(event.endTime)}`
   const percentage = event.endTime > 0 ? (event.currentTime / event.endTime) * 100 : 0
