@@ -1,14 +1,6 @@
 import * as alphaTab from '@coderline/alphatab'
 import './style.css'
-
-const demoAlphaTex = String.raw`\\title "Quiet Hours"
-\\subtitle "A short picking study"
-\\tempo 92
-.
-:4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |
-:4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |
-:4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |
-:4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |`
+import canonInDAlphaTex from './assets/scores/default/Canon in D.atex?raw'
 
 type ScoreRecord = {
   id: string
@@ -16,7 +8,7 @@ type ScoreRecord = {
   tex: string
 }
 
-const demoScore: ScoreRecord = { id: 'demo', name: 'Quiet Hours.atex', tex: demoAlphaTex }
+const defaultScore: ScoreRecord = { id: 'default-canon-in-d', name: 'Canon in D.atex', tex: canonInDAlphaTex }
 const scoreLibraryStorageKey = 'guitareasy-score-library'
 
 function normalizeScoreName(name: string) {
@@ -34,7 +26,7 @@ function restoreScoreLibrary() {
     const saved = JSON.parse(localStorage.getItem(scoreLibraryStorageKey) ?? '[]')
     if (!Array.isArray(saved)) return []
     return saved.filter((score): score is ScoreRecord => (
-      typeof score?.id === 'string' && score.id !== demoScore.id &&
+      typeof score?.id === 'string' && score.id !== defaultScore.id &&
       typeof score?.name === 'string' && typeof score?.tex === 'string' && score.tex.trim().length > 0
     )).map((score) => ({ ...score, name: normalizeScoreName(score.name) }))
   } catch {
@@ -42,7 +34,7 @@ function restoreScoreLibrary() {
   }
 }
 
-const scoreLibrary: ScoreRecord[] = [demoScore, ...restoreScoreLibrary()]
+const scoreLibrary: ScoreRecord[] = [defaultScore, ...restoreScoreLibrary()]
 
 type ThemePreference = 'system' | 'light' | 'dark'
 
@@ -162,7 +154,7 @@ app.innerHTML = `
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="1.2" fill="currentColor"/></svg>
             </button>
             <div class="player-readout">
-              <div class="player-title-row"><strong id="song-title">Quiet Hours</strong><span id="song-artist">· alphaTex score</span></div>
+              <div class="player-title-row"><strong id="song-title">Canon in D</strong><span id="song-artist">· alphaTex score</span></div>
               <div class="progress-track"><span id="progress-fill"></span></div>
             </div>
             <span class="player-time" id="song-position">00:00 / 00:00</span>
@@ -197,8 +189,8 @@ const sidebarToggle = document.querySelector<HTMLButtonElement>('#sidebar-toggle
 const studioGrid = document.querySelector<HTMLElement>('.studio-grid')!
 
 let api: alphaTab.AlphaTabApi
-let loadedName = demoScore.name
-let activeScoreId = demoScore.id
+let loadedName = defaultScore.name
+let activeScoreId = defaultScore.id
 let isPlayerReady = false
 let themePreference = initialTheme
 
@@ -268,7 +260,7 @@ function applySidebarState(collapsed: boolean) {
 
 function persistScoreLibrary() {
   try {
-    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(scoreLibrary.filter((score) => score.id !== demoScore.id)))
+    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(scoreLibrary.filter((score) => score.id !== defaultScore.id)))
   } catch {
     // A full or restricted browser store should not prevent score playback.
   }
@@ -298,7 +290,7 @@ function renderScoreLibrary() {
     const title = document.createElement('strong')
     title.textContent = score.name
     const meta = document.createElement('small')
-    meta.textContent = score.id === demoScore.id ? 'demo score' : 'uploaded score'
+    meta.textContent = score.id === defaultScore.id ? 'default score' : 'uploaded score'
     copy.append(title, meta)
 
     const marker = document.createElement('span')
@@ -310,7 +302,7 @@ function renderScoreLibrary() {
     selectButton.addEventListener('click', () => loadScore(score.id))
     row.append(selectButton)
 
-    if (score.id !== demoScore.id) {
+    if (score.id !== defaultScore.id) {
       const removeButton = document.createElement('button')
       removeButton.type = 'button'
       removeButton.className = 'score-remove'
@@ -335,10 +327,10 @@ function addScore(name: string, tex: string) {
 
 function removeScore(scoreId: string) {
   const index = scoreLibrary.findIndex((score) => score.id === scoreId)
-  if (index < 0 || scoreLibrary[index].id === demoScore.id) return
+  if (index < 0 || scoreLibrary[index].id === defaultScore.id) return
   scoreLibrary.splice(index, 1)
   persistScoreLibrary()
-  if (activeScoreId === scoreId) loadScore(demoScore.id)
+  if (activeScoreId === scoreId) loadScore(defaultScore.id)
   else renderScoreLibrary()
 }
 
@@ -548,14 +540,14 @@ if (modelContext?.registerTool) {
   const webMcpLifecycle = new AbortController()
   const registerWebMcpTools = async () => {
     await modelContext.registerTool({
-      name: 'load_demo_score',
-      title: 'Load demo score',
-      description: 'Load the visible Quiet Hours demo alphaTex score into the notation preview.',
+      name: 'load_default_score',
+      title: 'Load default score',
+      description: 'Load the visible Canon in D default alphaTex score into the notation preview.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute() {
-        loadScore(demoScore.id)
-        return { title: 'Quiet Hours', filename: demoScore.name, status: 'loaded' }
+        loadScore(defaultScore.id)
+        return { title: 'Canon in D', filename: defaultScore.name, status: 'loaded' }
       },
     }, { signal: webMcpLifecycle.signal })
 
@@ -592,4 +584,4 @@ if (modelContext?.registerTool) {
   void registerWebMcpTools().catch(() => webMcpLifecycle.abort())
 }
 
-loadScore(demoScore.id)
+loadScore(defaultScore.id)
