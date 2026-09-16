@@ -10,6 +10,40 @@ const demoAlphaTex = String.raw`\\title "Quiet Hours"
 :4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |
 :4 0.6 1.5 2.5 2.4 | 3.5 2.3 1.3 0.3 |`
 
+type ScoreRecord = {
+  id: string
+  name: string
+  tex: string
+}
+
+const demoScore: ScoreRecord = { id: 'demo', name: 'Quiet Hours.atex', tex: demoAlphaTex }
+const scoreLibraryStorageKey = 'guitareasy-score-library'
+
+function normalizeScoreName(name: string) {
+  return name.replace(/\.alphatex$/i, '.atex') || 'Untitled.atex'
+}
+
+function createScoreId() {
+  return typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `score-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function restoreScoreLibrary() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(scoreLibraryStorageKey) ?? '[]')
+    if (!Array.isArray(saved)) return []
+    return saved.filter((score): score is ScoreRecord => (
+      typeof score?.id === 'string' && score.id !== demoScore.id &&
+      typeof score?.name === 'string' && typeof score?.tex === 'string' && score.tex.trim().length > 0
+    )).map((score) => ({ ...score, name: normalizeScoreName(score.name) }))
+  } catch {
+    return []
+  }
+}
+
+const scoreLibrary: ScoreRecord[] = [demoScore, ...restoreScoreLibrary()]
+
 type ThemePreference = 'system' | 'light' | 'dark'
 
 const themeStorageKey = 'guitareasy-theme'
@@ -57,17 +91,17 @@ app.innerHTML = `
       </section>
 
       <section class="studio-grid">
-          <aside class="control-panel" id="control-panel" aria-label="File controls">
+        <aside class="control-panel" id="control-panel" aria-label="File controls">
           <div class="panel-heading">
             <div>
               <p class="section-kicker">source file</p>
               <h2>Bring a score</h2>
             </div>
-            <span class="file-type">.TEX</span>
+            <span class="file-type">.ATEX</span>
           </div>
 
           <div class="upload-card" id="drop-zone">
-            <input id="file-input" type="file" accept=".alphatex,.tex,.txt,text/plain" />
+            <input id="file-input" type="file" accept=".atex,.tex,.txt,text/plain" />
             <div class="upload-icon" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14.5v3A2.5 2.5 0 0 0 7.5 20h9a2.5 2.5 0 0 0 2.5-2.5v-3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
             </div>
@@ -75,18 +109,29 @@ app.innerHTML = `
               <p class="upload-title">Drop an alphaTex file here</p>
               <p class="upload-hint">or <label for="file-input">browse your files</label></p>
             </div>
-            <p class="upload-formats">.alphatex · .tex · .txt</p>
+            <p class="upload-formats">.atex · .tex · .txt</p>
           </div>
 
           <div class="loaded-file" id="loaded-file" hidden>
-            <div class="file-badge">TEX</div>
+            <div class="file-badge">ATEX</div>
             <div class="loaded-file-copy">
               <span class="loaded-label">loaded score</span>
-              <strong id="file-name">Quiet Hours.alphatex</strong>
+              <strong id="file-name">Quiet Hours.atex</strong>
             </div>
-            <button class="icon-button" id="clear-file" type="button" aria-label="Clear score" title="Clear score">
+            <button class="icon-button" id="clear-file" type="button" aria-label="Return to demo score" title="Return to demo score">
               <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
             </button>
+          </div>
+
+          <div class="score-library" aria-label="Score library">
+            <div class="library-heading">
+              <div>
+                <p class="section-kicker">score library</p>
+                <strong id="score-count">1 score</strong>
+              </div>
+              <span class="library-type">LOCAL</span>
+            </div>
+            <div class="score-list" id="score-list"></div>
           </div>
 
           <div class="panel-divider"></div>
@@ -136,7 +181,7 @@ app.innerHTML = `
         </section>
       </section>
 
-      <footer class="footer-note"><span>alphaTab renderer</span><span class="footer-line"></span><span>browser MIDI synthesis</span></footer>
+      <footer class="footer-note"><span>alphaTab renderer</span><span class="footer-line"></span><span>browser MIDI synthesis</span><span class="footer-line"></span><span>© GuitarEasy.app</span></footer>
     </main>
   </div>
 `
@@ -150,6 +195,8 @@ const loadedFile = document.querySelector<HTMLDivElement>('#loaded-file')!
 const fileName = document.querySelector<HTMLElement>('#file-name')!
 const clearFile = document.querySelector<HTMLButtonElement>('#clear-file')!
 const demoButton = document.querySelector<HTMLButtonElement>('#demo-button')!
+const scoreList = document.querySelector<HTMLDivElement>('#score-list')!
+const scoreCount = document.querySelector<HTMLElement>('#score-count')!
 const playPause = document.querySelector<HTMLButtonElement>('#play-pause')!
 const stop = document.querySelector<HTMLButtonElement>('#stop')!
 const renderState = document.querySelector<HTMLDivElement>('#render-state')!
@@ -165,13 +212,48 @@ const sidebarToggle = document.querySelector<HTMLButtonElement>('#sidebar-toggle
 const studioGrid = document.querySelector<HTMLElement>('.studio-grid')!
 
 let api: alphaTab.AlphaTabApi
-let loadedName = 'Quiet Hours.alphatex'
+let loadedName = demoScore.name
+let activeScoreId = demoScore.id
 let isPlayerReady = false
 let themePreference = initialTheme
 
 function getResolvedTheme() {
   if (themePreference !== 'system') return themePreference
   return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+}
+
+function getNotationPalette(theme: 'light' | 'dark') {
+  return theme === 'dark'
+    ? {
+        staffLineColor: '#707785',
+        barSeparatorColor: '#d9dde3',
+        barNumberColor: '#b7adff',
+        mainGlyphColor: '#eef1f0',
+        secondaryGlyphColor: 'rgba(238, 241, 240, 0.48)',
+        scoreInfoColor: '#eef1f0',
+      }
+    : {
+        staffLineColor: '#a5a5a5',
+        barSeparatorColor: '#222211',
+        barNumberColor: '#c80000',
+        mainGlyphColor: '#1d2029',
+        secondaryGlyphColor: 'rgba(29, 32, 41, 0.42)',
+        scoreInfoColor: '#1d2029',
+      }
+}
+
+function applyNotationTheme() {
+  if (!api) return
+  const palette = getNotationPalette(getResolvedTheme())
+  const resources = api.settings.display.resources
+  resources.staffLineColor = alphaTab.model.Color.fromJson(palette.staffLineColor)!
+  resources.barSeparatorColor = alphaTab.model.Color.fromJson(palette.barSeparatorColor)!
+  resources.barNumberColor = alphaTab.model.Color.fromJson(palette.barNumberColor)!
+  resources.mainGlyphColor = alphaTab.model.Color.fromJson(palette.mainGlyphColor)!
+  resources.secondaryGlyphColor = alphaTab.model.Color.fromJson(palette.secondaryGlyphColor)!
+  resources.scoreInfoColor = alphaTab.model.Color.fromJson(palette.scoreInfoColor)!
+  api.updateSettings()
+  if (api.score) api.render({ reuseViewport: true })
 }
 
 function updateThemeColor() {
@@ -189,6 +271,7 @@ function applyTheme(theme: ThemePreference) {
   })
   localStorage.setItem(themeStorageKey, theme)
   updateThemeColor()
+  applyNotationTheme()
 }
 
 function applySidebarState(collapsed: boolean) {
@@ -198,8 +281,90 @@ function applySidebarState(collapsed: boolean) {
   sidebarToggle.querySelector('span')!.textContent = collapsed ? 'Show controls' : 'Controls'
 }
 
+function persistScoreLibrary() {
+  try {
+    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(scoreLibrary.filter((score) => score.id !== demoScore.id)))
+  } catch {
+    // A full or restricted browser store should not prevent score playback.
+  }
+}
+
+function renderScoreLibrary() {
+  scoreList.replaceChildren()
+  scoreCount.textContent = `${scoreLibrary.length} ${scoreLibrary.length === 1 ? 'score' : 'scores'}`
+
+  scoreLibrary.forEach((score) => {
+    const row = document.createElement('div')
+    row.className = 'score-list-row'
+
+    const selectButton = document.createElement('button')
+    selectButton.type = 'button'
+    selectButton.className = 'score-item'
+    selectButton.classList.toggle('is-selected', score.id === activeScoreId)
+    selectButton.setAttribute('aria-pressed', String(score.id === activeScoreId))
+    selectButton.title = `Load ${score.name}`
+
+    const badge = document.createElement('span')
+    badge.className = 'score-item-badge'
+    badge.textContent = 'ATEX'
+
+    const copy = document.createElement('span')
+    copy.className = 'score-item-copy'
+    const title = document.createElement('strong')
+    title.textContent = score.name
+    const meta = document.createElement('small')
+    meta.textContent = score.id === demoScore.id ? 'demo score' : 'uploaded score'
+    copy.append(title, meta)
+
+    const marker = document.createElement('span')
+    marker.className = 'score-item-marker'
+    marker.setAttribute('aria-hidden', 'true')
+    marker.textContent = score.id === activeScoreId ? '✓' : ''
+
+    selectButton.append(badge, copy, marker)
+    selectButton.addEventListener('click', () => loadScore(score.id))
+    row.append(selectButton)
+
+    if (score.id !== demoScore.id) {
+      const removeButton = document.createElement('button')
+      removeButton.type = 'button'
+      removeButton.className = 'score-remove'
+      removeButton.setAttribute('aria-label', `Remove ${score.name}`)
+      removeButton.title = `Remove ${score.name}`
+      removeButton.textContent = '×'
+      removeButton.addEventListener('click', () => removeScore(score.id))
+      row.append(removeButton)
+    }
+
+    scoreList.append(row)
+  })
+}
+
+function addScore(name: string, tex: string) {
+  const score = { id: createScoreId(), name: normalizeScoreName(name), tex }
+  scoreLibrary.unshift(score)
+  persistScoreLibrary()
+  renderScoreLibrary()
+  return score
+}
+
+function removeScore(scoreId: string) {
+  const index = scoreLibrary.findIndex((score) => score.id === scoreId)
+  if (index < 0 || scoreLibrary[index].id === demoScore.id) return
+  scoreLibrary.splice(index, 1)
+  persistScoreLibrary()
+  if (activeScoreId === scoreId) loadScore(demoScore.id)
+  else renderScoreLibrary()
+}
+
+function loadScore(scoreId: string) {
+  const score = scoreLibrary.find((item) => item.id === scoreId)
+  if (score) loadTex(score.tex, score.name, score.id)
+}
+
 applyTheme(initialTheme)
 applySidebarState(localStorage.getItem(sidebarStorageKey) === 'true')
+renderScoreLibrary()
 
 themeSwitcher.addEventListener('click', (event) => {
   const target = (event.target as HTMLElement).closest<HTMLButtonElement>('[data-theme-choice]')
@@ -215,7 +380,10 @@ sidebarToggle.addEventListener('click', () => {
 
 const colorSchemeQuery = window.matchMedia('(prefers-color-scheme: light)')
 colorSchemeQuery.addEventListener('change', () => {
-  if (themePreference === 'system') updateThemeColor()
+  if (themePreference === 'system') {
+    updateThemeColor()
+    applyNotationTheme()
+  }
 })
 
 function formatDuration(milliseconds: number) {
@@ -248,7 +416,7 @@ function setLoadedFile(name: string | null) {
     loadedFile.hidden = false
     dropZone.classList.add('has-file')
   } else {
-    loadedName = 'Quiet Hours.alphatex'
+    loadedName = demoScore.name
     fileName.textContent = loadedName
     loadedFile.hidden = true
     dropZone.classList.remove('has-file')
@@ -262,10 +430,11 @@ function updatePlayButton(state: alphaTab.synth.PlayerState) {
   playPause.title = isPlaying ? 'Pause score' : 'Play score'
 }
 
-function loadTex(tex: string, name = loadedName) {
+function loadTex(tex: string, name = loadedName, scoreId = activeScoreId) {
   hideError()
   setRenderState('rendering score', 'loading')
   isPlayerReady = false
+  activeScoreId = scoreId
   playPause.disabled = true
   stop.disabled = true
   progressFill.style.width = '0%'
@@ -273,6 +442,7 @@ function loadTex(tex: string, name = loadedName) {
   notationEmpty.hidden = true
   notationCanvas.hidden = false
   setLoadedFile(name)
+  renderScoreLibrary()
 
   try {
     api.tex(tex)
@@ -292,7 +462,8 @@ function handleFile(file: File) {
       showError('That file is empty. Choose an alphaTex file with notation inside.')
       return
     }
-    loadTex(tex, file.name)
+    const score = addScore(file.name, tex)
+    loadTex(score.tex, score.name, score.id)
   })
   reader.addEventListener('error', () => showError('The file could not be opened. Please try another file.'))
   reader.readAsText(file)
@@ -307,6 +478,7 @@ api = new alphaTab.AlphaTabApi(notationCanvas, {
     layoutMode: alphaTab.LayoutMode.Page,
     scale: 0.9,
     staveProfile: alphaTab.StaveProfile.Tab,
+    resources: getNotationPalette(getResolvedTheme()),
   },
   player: {
     enablePlayer: true,
@@ -383,8 +555,8 @@ dropZone.addEventListener('drop', (event) => {
   const [file] = Array.from(event.dataTransfer?.files ?? [])
   if (file) handleFile(file)
 })
-clearFile.addEventListener('click', () => loadTex(demoAlphaTex))
-demoButton.addEventListener('click', () => loadTex(demoAlphaTex))
+clearFile.addEventListener('click', () => loadScore(demoScore.id))
+demoButton.addEventListener('click', () => loadScore(demoScore.id))
 document.addEventListener('keydown', (event) => {
   const target = event.target as HTMLElement | null
   if (event.code === 'Space' && target?.tagName !== 'INPUT' && target?.tagName !== 'TEXTAREA' && target?.tagName !== 'BUTTON') {
@@ -410,8 +582,8 @@ if (modelContext?.registerTool) {
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute() {
-        loadTex(demoAlphaTex)
-        return { title: 'Quiet Hours', filename: 'Quiet Hours.alphatex', status: 'loaded' }
+        loadScore(demoScore.id)
+        return { title: 'Quiet Hours', filename: demoScore.name, status: 'loaded' }
       },
     }, { signal: webMcpLifecycle.signal })
 
@@ -448,4 +620,4 @@ if (modelContext?.registerTool) {
   void registerWebMcpTools().catch(() => webMcpLifecycle.abort())
 }
 
-loadTex(demoAlphaTex)
+loadScore(demoScore.id)
