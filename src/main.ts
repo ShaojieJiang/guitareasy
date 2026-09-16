@@ -487,6 +487,9 @@ api = new alphaTab.AlphaTabApi(notationCanvas, {
     enableElementHighlighting: true,
     soundFont: '/soundfont/sonivox.sf2',
     scrollElement: notationViewport,
+    scrollMode: alphaTab.ScrollMode.OffScreen,
+    scrollOffsetY: -24,
+    scrollSpeed: 420,
   },
 })
 
