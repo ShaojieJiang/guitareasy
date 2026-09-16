@@ -97,7 +97,13 @@ app.innerHTML = `
               <p class="section-kicker">source file</p>
               <h2>Bring a score</h2>
             </div>
-            <span class="file-type">.ATEX</span>
+            <div class="panel-heading-side">
+              <div class="tip-block">
+                <span class="tip-icon">i</span>
+                <p>alphaTex is parsed in your browser. Nothing leaves this workspace.</p>
+              </div>
+              <span class="file-type">.ATEX</span>
+            </div>
           </div>
 
           <div class="upload-card" id="drop-zone">
@@ -112,17 +118,6 @@ app.innerHTML = `
             <p class="upload-formats">.atex · .tex · .txt</p>
           </div>
 
-          <div class="loaded-file" id="loaded-file" hidden>
-            <div class="file-badge">ATEX</div>
-            <div class="loaded-file-copy">
-              <span class="loaded-label">loaded score</span>
-              <strong id="file-name">Quiet Hours.atex</strong>
-            </div>
-            <button class="icon-button" id="clear-file" type="button" aria-label="Return to demo score" title="Return to demo score">
-              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-            </button>
-          </div>
-
           <div class="score-library" aria-label="Score library">
             <div class="library-heading">
               <div>
@@ -134,12 +129,6 @@ app.innerHTML = `
             <div class="score-list" id="score-list"></div>
           </div>
 
-          <div class="panel-divider"></div>
-          <div class="tip-block">
-            <span class="tip-icon">i</span>
-            <p>alphaTex is parsed in your browser. Nothing leaves this workspace.</p>
-          </div>
-          <button class="text-button" id="demo-button" type="button">Load the demo score <span aria-hidden="true">↗</span></button>
         </aside>
 
         <section class="score-panel" aria-labelledby="score-heading">
@@ -191,10 +180,6 @@ const notationCanvas = document.querySelector<HTMLDivElement>('#notation-canvas'
 const notationEmpty = document.querySelector<HTMLDivElement>('#notation-empty')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const dropZone = document.querySelector<HTMLDivElement>('#drop-zone')!
-const loadedFile = document.querySelector<HTMLDivElement>('#loaded-file')!
-const fileName = document.querySelector<HTMLElement>('#file-name')!
-const clearFile = document.querySelector<HTMLButtonElement>('#clear-file')!
-const demoButton = document.querySelector<HTMLButtonElement>('#demo-button')!
 const scoreList = document.querySelector<HTMLDivElement>('#score-list')!
 const scoreCount = document.querySelector<HTMLElement>('#score-count')!
 const playPause = document.querySelector<HTMLButtonElement>('#play-pause')!
@@ -409,20 +394,6 @@ function hideError() {
   scoreError.textContent = ''
 }
 
-function setLoadedFile(name: string | null) {
-  if (name) {
-    loadedName = name
-    fileName.textContent = name
-    loadedFile.hidden = false
-    dropZone.classList.add('has-file')
-  } else {
-    loadedName = demoScore.name
-    fileName.textContent = loadedName
-    loadedFile.hidden = true
-    dropZone.classList.remove('has-file')
-  }
-}
-
 function updatePlayButton(state: alphaTab.synth.PlayerState) {
   const isPlaying = state === alphaTab.synth.PlayerState.Playing
   playPause.classList.toggle('is-playing', isPlaying)
@@ -441,7 +412,7 @@ function loadTex(tex: string, name = loadedName, scoreId = activeScoreId) {
   songPosition.textContent = '00:00 / 00:00'
   notationEmpty.hidden = true
   notationCanvas.hidden = false
-  setLoadedFile(name)
+  loadedName = name
   renderScoreLibrary()
 
   try {
@@ -558,8 +529,6 @@ dropZone.addEventListener('drop', (event) => {
   const [file] = Array.from(event.dataTransfer?.files ?? [])
   if (file) handleFile(file)
 })
-clearFile.addEventListener('click', () => loadScore(demoScore.id))
-demoButton.addEventListener('click', () => loadScore(demoScore.id))
 document.addEventListener('keydown', (event) => {
   const target = event.target as HTMLElement | null
   if (event.code === 'Space' && target?.tagName !== 'INPUT' && target?.tagName !== 'TEXTAREA' && target?.tagName !== 'BUTTON') {
