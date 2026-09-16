@@ -7,7 +7,7 @@ type ScoreRecord = {
   tex: string
 }
 
-const defaultScoreSources = import.meta.glob('./assets/scores/default/*.atex', {
+const bundledScoreSources = import.meta.glob('./assets/scores/*.atex', {
   eager: true,
   import: 'default',
   query: '?raw',
@@ -17,15 +17,15 @@ function getFileName(path: string) {
   return path.split('/').pop() ?? 'Untitled.atex'
 }
 
-const defaultScores: ScoreRecord[] = Object.entries(defaultScoreSources)
-  .sort(([left], [right]) => left.localeCompare(right))
+const bundledScores: ScoreRecord[] = Object.entries(bundledScoreSources)
   .map(([path, tex]) => ({
-    id: `default:${path}`,
+    id: `bundled:${path}`,
     name: getFileName(path),
     tex,
   }))
-const defaultScore = defaultScores.find((score) => score.name === 'Game of Thrones Theme.atex') ?? defaultScores[0]!
-const defaultScoreIds = new Set(defaultScores.map((score) => score.id))
+  .sort((left, right) => left.name.localeCompare(right.name))
+const defaultScore = bundledScores[0]!
+const bundledScoreIds = new Set(bundledScores.map((score) => score.id))
 const scoreLibraryStorageKey = 'guitareasy-score-library'
 
 function normalizeScoreName(name: string) {
@@ -43,7 +43,7 @@ function restoreScoreLibrary() {
     const saved = JSON.parse(localStorage.getItem(scoreLibraryStorageKey) ?? '[]')
     if (!Array.isArray(saved)) return []
     return saved.filter((score): score is ScoreRecord => (
-      typeof score?.id === 'string' && !defaultScoreIds.has(score.id) &&
+      typeof score?.id === 'string' && !bundledScoreIds.has(score.id) &&
       typeof score?.name === 'string' && typeof score?.tex === 'string' && score.tex.trim().length > 0
     )).map((score) => ({ ...score, name: normalizeScoreName(score.name) }))
   } catch {
@@ -51,7 +51,7 @@ function restoreScoreLibrary() {
   }
 }
 
-const scoreLibrary: ScoreRecord[] = [...defaultScores, ...restoreScoreLibrary()]
+const scoreLibrary: ScoreRecord[] = [...bundledScores, ...restoreScoreLibrary()]
 
 type ThemePreference = 'system' | 'light' | 'dark'
 
@@ -277,7 +277,7 @@ function applySidebarState(collapsed: boolean) {
 
 function persistScoreLibrary() {
   try {
-    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(scoreLibrary.filter((score) => !defaultScoreIds.has(score.id))))
+    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(scoreLibrary.filter((score) => !bundledScoreIds.has(score.id))))
   } catch {
     // A full or restricted browser store should not prevent score playback.
   }
@@ -307,7 +307,7 @@ function renderScoreLibrary() {
     const title = document.createElement('strong')
     title.textContent = score.name
     const meta = document.createElement('small')
-    meta.textContent = score.id === defaultScore.id ? 'default score' : 'uploaded score'
+    meta.textContent = bundledScoreIds.has(score.id) ? 'built-in score' : 'uploaded score'
     copy.append(title, meta)
 
     const marker = document.createElement('span')
@@ -319,7 +319,7 @@ function renderScoreLibrary() {
     selectButton.addEventListener('click', () => loadScore(score.id))
     row.append(selectButton)
 
-    if (!defaultScoreIds.has(score.id)) {
+    if (!bundledScoreIds.has(score.id)) {
       const removeButton = document.createElement('button')
       removeButton.type = 'button'
       removeButton.className = 'score-remove'
@@ -336,7 +336,7 @@ function renderScoreLibrary() {
 
 function addScore(name: string, tex: string) {
   const score = { id: createScoreId(), name: normalizeScoreName(name), tex }
-  scoreLibrary.unshift(score)
+  scoreLibrary.splice(bundledScores.length, 0, score)
   persistScoreLibrary()
   renderScoreLibrary()
   return score
@@ -344,7 +344,7 @@ function addScore(name: string, tex: string) {
 
 function removeScore(scoreId: string) {
   const index = scoreLibrary.findIndex((score) => score.id === scoreId)
-  if (index < 0 || defaultScoreIds.has(scoreLibrary[index].id)) return
+  if (index < 0 || bundledScoreIds.has(scoreLibrary[index].id)) return
   scoreLibrary.splice(index, 1)
   persistScoreLibrary()
   if (activeScoreId === scoreId) loadScore(defaultScore.id)
@@ -559,7 +559,7 @@ if (modelContext?.registerTool) {
     await modelContext.registerTool({
       name: 'load_default_score',
       title: 'Load default score',
-      description: 'Load the visible default alphaTex score into the notation preview.',
+      description: 'Load the visible bundled default alphaTex score into the notation preview.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute() {
