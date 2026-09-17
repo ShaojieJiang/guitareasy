@@ -208,6 +208,7 @@ let api: alphaTab.AlphaTabApi
 let loadedName = defaultScore.name
 let activeScoreId = defaultScore.id
 let isPlayerReady = false
+let audioResumePending = false
 let themePreference = initialTheme
 
 function getResolvedTheme() {
@@ -409,10 +410,50 @@ function updatePlayButton(state: alphaTab.synth.PlayerState) {
   playPause.title = isPlaying ? 'Pause score' : 'Play score'
 }
 
+function recoverAudioAfterBackgrounding() {
+  if (!isPlayerReady || !audioResumePending) return
+
+  // alphaTab keeps the synth state as Playing while a mobile browser suspends
+  // or interrupts its Web Audio context. Rebuilding the output source makes
+  // the existing playback state audible again after the page becomes visible.
+  if (api.playerState === alphaTab.synth.PlayerState.Playing) {
+    api.pause()
+    api.play()
+  } else {
+    audioResumePending = false
+  }
+}
+
+function rememberAudioBeforeBackgrounding() {
+  if (isPlayerReady && api.playerState === alphaTab.synth.PlayerState.Playing) {
+    audioResumePending = true
+  }
+}
+
+function handleAudioLifecycleChange() {
+  if (document.visibilityState === 'hidden') {
+    rememberAudioBeforeBackgrounding()
+  } else {
+    recoverAudioAfterBackgrounding()
+  }
+}
+
+function handleAudioResumeGesture(event: Event) {
+  if (!audioResumePending || document.visibilityState === 'hidden') return
+
+  // Let the play button handler perform the recovery so this gesture does not
+  // recover the player and then immediately toggle it back to paused.
+  if (event.target instanceof Node && playPause.contains(event.target)) return
+
+  recoverAudioAfterBackgrounding()
+  audioResumePending = false
+}
+
 function loadTex(tex: string, name = loadedName, scoreId = activeScoreId) {
   hideError()
   setRenderState('rendering score', 'loading')
   isPlayerReady = false
+  audioResumePending = false
   activeScoreId = scoreId
   playPause.disabled = true
   stop.disabled = true
@@ -504,6 +545,9 @@ api.playerStateChanged.on((event) => {
     setRenderState('ready')
   }
 })
+api.playerFinished.on(() => {
+  audioResumePending = false
+})
 api.playerPositionChanged.on((event) => {
   songPosition.textContent = `${formatDuration(event.currentTime)} / ${formatDuration(event.endTime)}`
   const percentage = event.endTime > 0 ? (event.currentTime / event.endTime) * 100 : 0
@@ -511,10 +555,19 @@ api.playerPositionChanged.on((event) => {
 })
 
 playPause.addEventListener('click', () => {
-  if (isPlayerReady) api.playPause()
+  if (!isPlayerReady) return
+
+  if (audioResumePending && api.playerState === alphaTab.synth.PlayerState.Playing) {
+    recoverAudioAfterBackgrounding()
+    audioResumePending = false
+    return
+  }
+
+  api.playPause()
 })
 stop.addEventListener('click', () => {
   if (isPlayerReady) {
+    audioResumePending = false
     api.stop()
     progressFill.style.width = '0%'
     songPosition.textContent = '00:00 / 00:00'
@@ -540,9 +593,19 @@ dropZone.addEventListener('drop', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.code === 'Space') {
     event.preventDefault()
-    if (isPlayerReady) api.playPause()
+    if (!isPlayerReady) return
+    if (audioResumePending && api.playerState === alphaTab.synth.PlayerState.Playing) {
+      recoverAudioAfterBackgrounding()
+      audioResumePending = false
+    } else {
+      api.playPause()
+    }
   }
 })
+document.addEventListener('visibilitychange', handleAudioLifecycleChange)
+window.addEventListener('pagehide', rememberAudioBeforeBackgrounding)
+window.addEventListener('pageshow', recoverAudioAfterBackgrounding)
+document.addEventListener('pointerdown', handleAudioResumeGesture, true)
 
 type WebModelContext = {
   registerTool: (tool: unknown, options?: { signal?: AbortSignal }) => void | Promise<void>
