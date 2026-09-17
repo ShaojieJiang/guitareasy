@@ -112,10 +112,7 @@ button:focus-visible, label:focus-visible { outline: 2px solid var(--accent); ou
 .app-shell { min-height: 100svh; background: radial-gradient(circle at 78% 0%, var(--app-glow), transparent 27rem), var(--app-bg); }
 .topbar { height: 74px; padding: 0 clamp(24px, 5vw, 76px); border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; }
 .brand { display: inline-flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; font-size: 17px; font-weight: 700; letter-spacing: -0.35px; }
-.brand-mark { width: 25px; height: 25px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; gap: 2px; }
-.brand-mark span { display: block; width: 2px; height: 11px; border-radius: 2px; background: var(--accent-ink); transform: rotate(-19deg); }
-.brand-mark span:nth-child(2) { height: 16px; }
-.brand-mark span:nth-child(3) { height: 8px; }
+.brand-mark { display: block; width: 25px; height: 25px; flex: none; }
 .topbar-actions, .topbar-meta { display: flex; align-items: center; }
 .topbar-actions { gap: 18px; }
 .topbar-meta { gap: 20px; }
@@ -131,11 +128,12 @@ button:focus-visible, label:focus-visible { outline: 2px solid var(--accent); ou
 
 .workspace { width: min(1240px, calc(100% - 48px)); margin: 0 auto; padding: clamp(30px, 4vw, 56px) 0 30px; }
 .intro-row { display: flex; justify-content: space-between; align-items: end; gap: 40px; margin-bottom: 46px; }
+.intro-row > div:first-child { flex: 1 1 auto; min-width: 0; }
 .section-kicker { color: var(--purple); margin: 0 0 15px; }
 h1, h2, p { margin-top: 0; }
-h1 { max-width: 600px; margin-bottom: 14px; color: var(--ink); font-size: clamp(28px, 3.5vw, 40px); line-height: 1; font-weight: 500; letter-spacing: -0.06em; }
+h1 { max-width: 760px; margin-bottom: 14px; color: var(--ink); font-size: clamp(28px, 3.5vw, 40px); line-height: 1; font-weight: 500; letter-spacing: -0.06em; }
 h2 { color: var(--ink); margin: 0; font-size: 20px; line-height: 1.1; font-weight: 600; letter-spacing: -0.025em; }
-.intro-copy { max-width: 510px; color: var(--muted); font-size: 17px; line-height: 1.55; margin-bottom: 0; }
+.intro-copy { max-width: 800px; color: var(--muted); font-size: 17px; line-height: 1.55; margin-bottom: 0; }
 .shortcut-note { display: flex; align-items: center; gap: 10px; color: var(--subtle); font-size: 13px; white-space: nowrap; padding-bottom: 3px; }
 .shortcut-key { color: var(--ink); border: 1px solid var(--line); border-bottom-color: rgba(244,242,237,0.3); background: rgba(255,255,255,0.04); border-radius: 5px; padding: 7px 9px; font-size: 10px; font-weight: 700; letter-spacing: 0.1em; }
 

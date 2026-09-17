@@ -70,12 +70,11 @@ app.innerHTML = `
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="/" aria-label="GuitarEasy home">
-        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+        <img class="brand-mark" src="/favicon.svg" alt="" aria-hidden="true" />
         <span>GuitarEasy</span>
       </a>
       <div class="topbar-actions">
         <div class="topbar-meta">
-          <span class="eyebrow">ALPHATEX PLAYER</span>
           <span class="status-pill"><span class="status-dot"></span>local workspace</span>
         </div>
         <div class="theme-switcher" id="theme-switcher" role="group" aria-label="Colour mode">
@@ -89,8 +88,7 @@ app.innerHTML = `
     <main class="workspace">
       <section class="intro-row" aria-labelledby="page-title">
         <div>
-          <p class="section-kicker">notation desk / 01</p>
-          <h1 id="page-title">Play your TAB.</h1>
+          <h1 id="page-title">GuitarEasy: Practising Guitar Made Easy</h1>
           <p class="intro-copy">Drop in an alphaTex file, see the notation, and hear every note through the built-in MIDI player.</p>
         </div>
         <div class="shortcut-note" aria-label="Keyboard shortcut">
@@ -144,13 +142,12 @@ app.innerHTML = `
           <div class="score-toolbar">
             <div>
               <p class="section-kicker">notation preview</p>
-              <h2 id="score-heading">Your score</h2>
-            </div>
-            <div class="score-toolbar-actions">
               <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-controls="control-panel" aria-expanded="true" title="Collapse file controls">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
                 <span>Controls</span>
               </button>
+            </div>
+            <div class="score-toolbar-actions">
               <div class="render-state" id="render-state"><span class="state-dot"></span><span id="render-state-label">ready to render</span></div>
             </div>
           </div>
@@ -539,8 +536,7 @@ dropZone.addEventListener('drop', (event) => {
   if (file) handleFile(file)
 })
 document.addEventListener('keydown', (event) => {
-  const target = event.target as HTMLElement | null
-  if (event.code === 'Space' && target?.tagName !== 'INPUT' && target?.tagName !== 'TEXTAREA' && target?.tagName !== 'BUTTON') {
+  if (event.code === 'Space') {
     event.preventDefault()
     if (isPlayerReady) api.playPause()
   }
