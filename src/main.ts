@@ -209,6 +209,7 @@ let loadedName = defaultScore.name
 let activeScoreId = defaultScore.id
 let isPlayerReady = false
 let audioResumePending = false
+let audioRecoveryInProgress = false
 let themePreference = initialTheme
 
 function getResolvedTheme() {
@@ -410,18 +411,67 @@ function updatePlayButton(state: alphaTab.synth.PlayerState) {
   playPause.title = isPlaying ? 'Pause score' : 'Play score'
 }
 
-function recoverAudioAfterBackgrounding() {
-  if (!isPlayerReady || !audioResumePending) return
+function resumeCurrentAudio() {
+  if (!isPlayerReady) return
 
-  // alphaTab keeps the synth state as Playing while a mobile browser suspends
-  // or interrupts its Web Audio context. Rebuilding the output source makes
-  // the existing playback state audible again after the page becomes visible.
-  if (api.playerState === alphaTab.synth.PlayerState.Playing) {
-    api.pause()
-    api.play()
-  } else {
-    audioResumePending = false
-  }
+  // Calling play() alone is not enough when the browser kept alphaTab's
+  // logical state as Playing but discarded the old worklet/source graph.
+  api.pause()
+  api.play()
+}
+
+function rebuildAudioPlayerAfterBackgrounding() {
+  if (!isPlayerReady || !audioResumePending || audioRecoveryInProgress) return
+
+  const resumePosition = api.timePosition
+  const playerMode = api.settings.player.playerMode
+  const enablePlayer = api.settings.player.enablePlayer
+  audioRecoveryInProgress = true
+  audioResumePending = false
+  isPlayerReady = false
+  playPause.disabled = true
+  stop.disabled = true
+
+  // Recreating the synthesizer gives mobile browsers a fresh AudioContext,
+  // AudioWorkletNode, and buffer after a lock-screen interruption. The score
+  // and SoundFont are reloaded by alphaTab's normal player-ready lifecycle.
+  api.pause()
+  api.settings.player.enablePlayer = false
+  api.settings.player.playerMode = alphaTab.PlayerMode.Disabled
+  api.updateSettings()
+  api.settings.player.enablePlayer = enablePlayer
+  api.settings.player.playerMode = playerMode
+  api.updateSettings()
+
+  let unsubscribe = () => {}
+  const recoveryTimeout = window.setTimeout(() => {
+    unsubscribe()
+    audioRecoveryInProgress = false
+    audioResumePending = true
+    isPlayerReady = api.isReadyForPlayback
+    playPause.disabled = !isPlayerReady
+    stop.disabled = !isPlayerReady
+  }, 10000)
+  unsubscribe = api.playerReady.on(() => {
+    window.clearTimeout(recoveryTimeout)
+    unsubscribe()
+    audioRecoveryInProgress = false
+    isPlayerReady = true
+    playPause.disabled = false
+    stop.disabled = false
+    api.timePosition = Math.min(resumePosition, api.endTime)
+    audioResumePending = true
+    resumeCurrentAudio()
+  })
+}
+
+function recoverAudioAfterBackgrounding() {
+  if (!isPlayerReady || !audioResumePending || audioRecoveryInProgress) return
+
+  // A user gesture is allowed to resume an existing context even when the
+  // automatic post-visibility attempt was rejected by mobile autoplay rules.
+  resumeCurrentAudio()
+  audioResumePending = false
 }
 
 function rememberAudioBeforeBackgrounding() {
@@ -434,7 +484,7 @@ function handleAudioLifecycleChange() {
   if (document.visibilityState === 'hidden') {
     rememberAudioBeforeBackgrounding()
   } else {
-    recoverAudioAfterBackgrounding()
+    rebuildAudioPlayerAfterBackgrounding()
   }
 }
 
@@ -446,7 +496,6 @@ function handleAudioResumeGesture(event: Event) {
   if (event.target instanceof Node && playPause.contains(event.target)) return
 
   recoverAudioAfterBackgrounding()
-  audioResumePending = false
 }
 
 function loadTex(tex: string, name = loadedName, scoreId = activeScoreId) {
@@ -604,7 +653,7 @@ document.addEventListener('keydown', (event) => {
 })
 document.addEventListener('visibilitychange', handleAudioLifecycleChange)
 window.addEventListener('pagehide', rememberAudioBeforeBackgrounding)
-window.addEventListener('pageshow', recoverAudioAfterBackgrounding)
+window.addEventListener('pageshow', rebuildAudioPlayerAfterBackgrounding)
 document.addEventListener('pointerdown', handleAudioResumeGesture, true)
 
 type WebModelContext = {
