@@ -1,0 +1,27 @@
+# GuitarEasy
+
+> GuitarEasy is a browser-based alphaTex guitar tablature reader and MIDI player. Paste or upload
+> alphaTex notation and read/play it with the [alphaTab](https://www.alphatab.net/) engine —
+> nothing is uploaded to a server; parsing and MIDI playback happen entirely in the browser.
+
+GuitarEasy renders alphaTex (`.atex`/`.tex`/`.txt`) guitar tablature, plays it back with an
+animated cursor and built-in MIDI synth, and keeps uploaded scores in the browser's local storage.
+It ships with example scores (*Canon in D*, *Game of Thrones Theme*, *Spanish Romance*) and
+supports system/light/dark colour modes.
+
+## Docs
+
+- [Source and README](https://github.com/ShaojieJiang/guitareasy): features, local development,
+  project structure.
+- [MCP server](https://guitareasy.app/mcp): a remote [MCP](https://modelcontextprotocol.io) server
+  at `/mcp` for uploading/downloading `.atex` files and playing a score back inline inside a
+  compatible MCP host (Claude.ai, Claude Desktop) via an MCP Apps UI resource. See
+  [`mcp/README.md`](https://github.com/ShaojieJiang/guitareasy/blob/main/mcp/README.md) for the
+  tool list (`upload_atex`, `download_atex`, `list_atex_files`, `play_atex`).
+
+## Notes
+
+- alphaTex is a plain-text guitar tablature notation format; see
+  [alphaTab's alphaTex documentation](https://www.alphatab.net/docs/alphatex) for its syntax.
+- GuitarEasy does not require an account and does not upload files by default — the MCP server
+  above is the only network-facing storage, and only when a client explicitly calls its tools.

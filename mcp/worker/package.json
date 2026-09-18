@@ -1,0 +1,29 @@
+{
+  "name": "guitareasy-mcp-worker",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "sync-seed-scores": "node scripts/sync-seed-scores.mjs",
+    "sync-player-assets": "node scripts/sync-player-assets.mjs",
+    "sync": "npm run sync-seed-scores && npm run sync-player-assets",
+    "predev": "npm run sync",
+    "dev": "wrangler dev",
+    "prebuild": "npm run sync",
+    "build": "tsc --noEmit",
+    "predeploy": "npm run sync",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "agents": "^0.23.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260918.1",
+    "typescript": "~6.0.2",
+    "wrangler": "^4.134.0"
+  }
+}

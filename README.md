@@ -69,6 +69,14 @@ npm run build
 
 Deploy the generated `dist/` directory to any static web host. The repository includes hosting metadata for GuitarEasy's static deployment configuration.
 
+## MCP server
+
+Deployed at **https://guitareasy.app/mcp**. `mcp/` contains a separate, deployable
+[MCP](https://modelcontextprotocol.io) server for uploading/downloading `.atex` files and playing
+them back inline inside a compatible MCP host via an MCP Apps UI resource, connectable from
+Claude.ai/Desktop, ChatGPT (developer mode), or as a one-click [Claude Desktop
+Extension](mcp/desktop-extension/README.md) (`.mcpb`). See [`mcp/README.md`](mcp/README.md).
+
 ## License
 
 GuitarEasy is released under the [MIT License](LICENSE). Third-party assets in `public/font/` and `public/soundfont/` retain their respective licensing and attribution requirements.

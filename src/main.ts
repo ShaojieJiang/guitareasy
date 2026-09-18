@@ -71,9 +71,9 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
 
 const englishMessages = {
   brandName: 'GuitarEasy',
-  appTitle: 'alphaTex player',
+  appTitle: 'Guitar Practice Made Easy',
   appDescription: 'A streamlined alphaTex guitar tablature reader and MIDI player.',
-  appKicker: 'ALPHATEX PLAYER',
+  appKicker: 'GUITAR PRACTICE MADE EASY',
   localWorkspace: 'local workspace',
   homeLink: 'GuitarEasy home',
   githubLink: 'View GuitarEasy on GitHub',
@@ -190,7 +190,7 @@ const translations: Record<Locale, Partial<Record<MessageKey, string>>> = {
     emptyFile: 'Esse arquivo está vazio. Escolha um arquivo alphaTex com notação.', fileCouldNotOpen: 'Não foi possível abrir o arquivo. Tente outro.', fileCouldNotRead: 'Não foi possível ler este arquivo como alphaTex. Verifique a sintaxe e tente novamente.', alphaTabCouldNotRender: 'O alphaTab não conseguiu renderizar esta partitura.', footerRenderer: 'renderizador alphaTab', footerMidi: 'síntese MIDI no navegador',
   },
   zh: {
-    brandName: 'GuitarEasy', appTitle: 'alphaTex 播放器', appDescription: '一款用于阅读 alphaTex 吉他六线谱并进行 MIDI 播放的简洁工具。', appKicker: 'ALPHATEX 播放器', localWorkspace: '本地工作区', homeLink: 'GuitarEasy 首页', language: '语言', colourMode: '外观模式', system: '跟随系统', light: '浅色', dark: '深色',
+    brandName: '吉易', appTitle: 'alphaTex 播放器', appDescription: '一款用于阅读 alphaTex 吉他六线谱并进行 MIDI 播放的简洁工具。', appKicker: 'ALPHATEX 播放器', localWorkspace: '本地工作区', homeLink: 'GuitarEasy 首页', language: '语言', colourMode: '外观模式', system: '跟随系统', light: '浅色', dark: '深色',
     useSystemColourMode: '跟随系统外观', useLightColourMode: '使用浅色模式', useDarkColourMode: '使用深色模式', pageKicker: '乐谱工作台 / 01', pageTitle: '弹奏你的六线谱。', introCopy: '导入 alphaTex 文件即可查看乐谱，并通过内置 MIDI 播放器聆听每个音符。', space: '空格', playPause: '播放 / 暂停', keyboardShortcut: '键盘快捷键',
     sourceFile: '源文件', bringScore: '添加乐谱', privacyNote: 'alphaTex 仅在浏览器中解析，文件不会上传或离开此设备。', dropFile: '将 alphaTex 文件拖到这里', or: '或', browseFiles: '选择文件', scoreLibrary: '乐谱库', scoreCount: '{count} 份乐谱', scoreCountPlural: '{count} 份乐谱', local: '本地', notationPreview: '乐谱预览', yourScore: '你的乐谱', controls: '文件面板', showControls: '显示文件面板', collapseFileControls: '收起文件面板',
     readyToRender: '已就绪', uploadToStart: '上传乐谱即可开始阅读。', midiPlayerControls: 'MIDI 播放控件', alphaTexScore: 'alphaTex 乐谱', playScore: '播放乐谱', pauseScore: '暂停播放', stopPlayback: '停止播放', builtInScore: '内置乐谱', uploadedScore: '已上传的乐谱', loadScoreNamed: '加载 {name}', removeScoreNamed: '删除 {name}', renderingScore: '正在渲染乐谱', couldNotRender: '无法渲染', playingNow: '正在播放', loadingSoundfont: '正在加载音色库',
