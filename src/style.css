@@ -122,6 +122,11 @@ button:focus-visible, label:focus-visible { outline: 2px solid var(--accent); ou
 .github-button:hover { color: var(--ink); }
 .github-button svg { width: 19px; height: 19px; }
 .state-dot { width: 7px; height: 7px; display: inline-block; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.12); }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.locale-picker { display: inline-flex; align-items: center; }
+.locale-picker select { min-height: 33px; max-width: 132px; padding: 5px 28px 5px 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); background: var(--panel); font-size: 12px; font-weight: 600; cursor: pointer; }
+.locale-picker select:hover { border-color: rgba(var(--accent-rgb), 0.55); }
+.locale-picker select:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 .theme-switcher { display: inline-flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, 0.04); }
 .theme-option { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 27px; padding: 4px 7px; border: 0; border-radius: 5px; color: var(--subtle); background: transparent; font-size: 11px; font-weight: 600; }
 .theme-option:hover { color: var(--ink); background: rgba(255, 255, 255, 0.07); }
@@ -237,6 +242,7 @@ h2 { color: var(--ink); margin: 0; font-size: 20px; line-height: 1.1; font-weigh
   .topbar { height: 64px; padding: 0 18px; }
   .topbar-actions { gap: 8px; }
   .topbar-meta { display: flex; }
+  .locale-picker select { width: 92px; max-width: 92px; padding-inline: 7px 20px; font-size: 11px; }
   .theme-label { display: none; }
   .theme-option { width: 27px; padding: 4px; }
   .workspace { width: calc(100% - 24px); padding-top: 28px; }
