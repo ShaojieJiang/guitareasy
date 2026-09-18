@@ -1,0 +1,16 @@
+{
+  "name": "guitareasy-desktop-extension",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Claude Desktop Extension (.mcpb) bundling mcp-remote pointed at the GuitarEasy MCP server.",
+  "scripts": {
+    "pack": "mcpb pack . dist/guitareasy.mcpb",
+    "validate": "mcpb validate manifest.json"
+  },
+  "dependencies": {
+    "mcp-remote": "^0.14.2"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2"
+  }
+}

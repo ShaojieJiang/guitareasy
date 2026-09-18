@@ -1,0 +1,40 @@
+{
+  "manifest_version": "0.3",
+  "name": "guitareasy",
+  "display_name": "GuitarEasy",
+  "version": "1.0.0",
+  "description": "Upload, download, and play alphaTex guitar tab scores in an interactive alphaTab player, right inside Claude.",
+  "long_description": "Connects Claude Desktop to the GuitarEasy MCP server (guitareasy.app/mcp): upload and download .atex alphaTex guitar tablature files, list your stored scores, and open one in an interactive alphaTab player rendered inline in the chat via an MCP Apps UI resource. Requires network access — this extension bundles mcp-remote to bridge Claude Desktop's local stdio servers to the remote GuitarEasy server; no score data is stored on this machine.",
+  "author": {
+    "name": "Shaojie Jiang",
+    "url": "https://github.com/ShaojieJiang"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ShaojieJiang/guitareasy"
+  },
+  "homepage": "https://guitareasy.app",
+  "documentation": "https://github.com/ShaojieJiang/guitareasy/blob/main/mcp/README.md",
+  "support": "https://github.com/ShaojieJiang/guitareasy/issues",
+  "server": {
+    "type": "node",
+    "entry_point": "node_modules/mcp-remote/dist/proxy.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/node_modules/mcp-remote/dist/proxy.js",
+        "https://guitareasy.app/mcp",
+        "--transport",
+        "http-only"
+      ]
+    }
+  },
+  "keywords": ["guitar", "tablature", "alphatex", "alphatab", "music", "sheet-music"],
+  "license": "MIT",
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}

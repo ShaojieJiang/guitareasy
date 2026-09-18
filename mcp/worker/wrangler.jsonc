@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "guitareasy-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-18",
+  "compatibility_flags": ["nodejs_compat"],
+  "rules": [{ "type": "Text", "globs": ["**/*.atex"], "fallthrough": true }],
+  "kv_namespaces": [
+    {
+      "binding": "SCORES_KV",
+      "id": "fe7b595463574ab08cae0c17b8afb4e5"
+    }
+  ],
+  "assets": {
+    // Populated by `npm run sync-player-assets` from ../app/dist into
+    // ./public/mcp-app/. Deliberately NOT ./public/mcp/ — a static asset at
+    // the exact path /mcp would shadow the JSON-RPC endpoint of the same
+    // name. Also avoids colliding with the main GuitarEasy app's /font/,
+    // /soundfont/, /assets/ paths when both share the guitareasy.app domain.
+    "directory": "./public",
+    "binding": "ASSETS",
+    // Cloudflare's default asset routing claims the whole matched route
+    // path space (here "guitareasy.app/mcp*") once ANY asset falls under
+    // it, 405-ing non-GET requests to unmatched sub-paths instead of
+    // falling through — which would swallow POST/DELETE /mcp, the actual
+    // JSON-RPC endpoint. The player assets also go through the Worker first
+    // so it can add CORS headers required by ChatGPT's sandbox iframe.
+    "run_worker_first": ["/mcp", "/mcp-app/*"]
+  },
+  "routes": [
+    {
+      "pattern": "guitareasy.app/mcp*",
+      "zone_name": "guitareasy.app"
+    }
+  ]
+}
