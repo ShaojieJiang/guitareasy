@@ -8,11 +8,53 @@ export interface Env {
   ASSETS: Fetcher
 }
 
-const PLAYER_RESOURCE_URI = 'ui://guitareasy/player'
+// Resource URIs are cache keys in MCP Apps hosts. Bump this when the HTML,
+// bundle, or security policy changes so hosts do not keep an older broken
+// widget after a deployment.
+const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v9.html'
+// Keep older cache keys readable for ChatGPT connections that have not
+// refreshed their tool descriptor since a previous UI deployment.
+const LEGACY_PLAYER_RESOURCE_URIS = [
+  'ui://guitareasy/player/v8.html',
+  'ui://guitareasy/player/v7.html',
+  'ui://guitareasy/player/v6.html',
+  'ui://guitareasy/player/v5.html',
+  'ui://guitareasy/player/v4.html',
+  'ui://guitareasy/player/v3.html',
+  'ui://guitareasy/player/v2.html',
+  'ui://guitareasy/player',
+] as const
+const PLAYER_ASSET_ORIGIN = 'https://guitareasy.app'
+export const PLAYER_SESSION_KEY_PREFIX = 'player-session:'
+const PLAYER_SESSION_TTL_SECONDS = 24 * 60 * 60
 const MAX_FILE_BYTES = 256 * 1024
 const MAX_INDEX_ENTRIES = 200
 const INDEX_KEY = 'index'
 const SEEDED_KEY = 'seeded'
+
+function playerResourceMeta(assetOrigin: string) {
+  return {
+    ui: {
+      prefersBorder: true,
+      domain: assetOrigin,
+      csp: {
+        resourceDomains: [assetOrigin],
+        connectDomains: [assetOrigin],
+        frameDomains: [assetOrigin],
+      },
+    },
+    // ChatGPT compatibility aliases for connections using the legacy
+    // Apps SDK metadata rather than the MCP Apps fields above.
+    'openai/widgetPrefersBorder': true,
+    'openai/widgetDomain': assetOrigin,
+    'openai/widgetCSP': {
+      resource_domains: [assetOrigin],
+      connect_domains: [assetOrigin],
+      frame_domains: [assetOrigin],
+      redirect_domains: [assetOrigin],
+    },
+  }
+}
 
 type FileMeta = { id: string; name: string; size: number; uploadedAt: string }
 type FileRecord = FileMeta & { tex: string }
@@ -160,8 +202,11 @@ export function createServer(env: Env, request?: Request): McpServer {
         tex: z.string().min(1).optional().describe('Inline alphaTex source, used when no id is given.'),
         name: z.string().min(1).optional().describe('Display name when passing inline tex.'),
       }),
-      outputSchema: z.object({ name: z.string(), tex: z.string() }),
-      _meta: { ui: { resourceUri: PLAYER_RESOURCE_URI } },
+      outputSchema: z.object({ name: z.string(), tex: z.string(), playbackUrl: z.string().url() }),
+      _meta: {
+        ui: { resourceUri: PLAYER_RESOURCE_URI },
+        'openai/outputTemplate': PLAYER_RESOURCE_URI,
+      },
     },
     async ({ id, tex, name }) => {
       await ensureSeeded(env)
@@ -181,29 +226,59 @@ export function createServer(env: Env, request?: Request): McpServer {
         return { content: [{ type: 'text', text: 'Provide either an "id" or inline "tex".' }], isError: true }
       }
 
+      // ChatGPT does not currently delegate the `autoplay` permission to
+      // plugin iframes. Give the widget an opaque, short-lived URL that it can
+      // ask the host to open as a first-party page when the user wants audio.
+      const playbackToken = crypto.randomUUID()
+      await env.SCORES_KV.put(
+        `${PLAYER_SESSION_KEY_PREFIX}${playbackToken}`,
+        JSON.stringify({ name: resolvedName, tex: resolvedTex }),
+        { expirationTtl: PLAYER_SESSION_TTL_SECONDS },
+      )
+      const origin = request ? new URL(request.url).origin : PLAYER_ASSET_ORIGIN
+      const playbackUrl = `${origin}/mcp-app/?session=${encodeURIComponent(playbackToken)}`
+
       return {
         content: [{ type: 'text', text: `Opened "${resolvedName}" in the player.` }],
-        structuredContent: { name: resolvedName, tex: resolvedTex },
+        structuredContent: { name: resolvedName, tex: resolvedTex, playbackUrl },
       }
     },
   )
 
-  registerAppResource(
-    server,
-    PLAYER_RESOURCE_URI,
-    PLAYER_RESOURCE_URI,
-    { mimeType: RESOURCE_MIME_TYPE },
-    async () => {
-      const origin = request ? new URL(request.url).origin : undefined
-      const assetUrl = new URL('/mcp-app/index.html', origin ?? 'https://player.internal/')
-      const assetResponse = await env.ASSETS.fetch(new Request(assetUrl))
-      let html = await assetResponse.text()
-      if (origin) {
-        html = html.replace('<head>', `<head>\n    <base href="${origin}/">`)
-      }
-      return { contents: [{ uri: PLAYER_RESOURCE_URI, mimeType: RESOURCE_MIME_TYPE, text: html }] }
-    },
-  )
+  for (const resourceUri of [PLAYER_RESOURCE_URI, ...LEGACY_PLAYER_RESOURCE_URIS]) {
+    registerAppResource(
+      server,
+      'GuitarEasy player',
+      resourceUri,
+      {
+        mimeType: RESOURCE_MIME_TYPE,
+        _meta: playerResourceMeta(PLAYER_ASSET_ORIGIN),
+      },
+      async () => {
+        const origin = request ? new URL(request.url).origin : undefined
+        const assetUrl = new URL('/mcp-app/index.html', origin ?? 'https://player.internal/')
+        const assetResponse = await env.ASSETS.fetch(new Request(assetUrl))
+        let html = await assetResponse.text()
+        const assetOrigin = origin ?? PLAYER_ASSET_ORIGIN
+        // ChatGPT renders the resource on a sandbox origin. Make every
+        // external asset URL explicit instead of relying on <base>, which is
+        // not part of ChatGPT's documented widget CSP contract.
+        html = html
+          .replaceAll('src="/mcp-app/', `src="${assetOrigin}/mcp-app/`)
+          .replaceAll('href="/mcp-app/', `href="${assetOrigin}/mcp-app/`)
+        return {
+          contents: [
+            {
+              uri: resourceUri,
+              mimeType: RESOURCE_MIME_TYPE,
+              text: html,
+              _meta: playerResourceMeta(assetOrigin),
+            },
+          ],
+        }
+      },
+    )
+  }
 
   return server
 }

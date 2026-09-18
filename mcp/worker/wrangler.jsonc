@@ -23,9 +23,9 @@
     // path space (here "guitareasy.app/mcp*") once ANY asset falls under
     // it, 405-ing non-GET requests to unmatched sub-paths instead of
     // falling through — which would swallow POST/DELETE /mcp, the actual
-    // JSON-RPC endpoint. Forcing exactly "/mcp" through the Worker first
-    // avoids that; everything else (/mcp-app/*) still auto-serves as assets.
-    "run_worker_first": ["/mcp"]
+    // JSON-RPC endpoint. The player assets also go through the Worker first
+    // so it can add CORS headers required by ChatGPT's sandbox iframe.
+    "run_worker_first": ["/mcp", "/mcp-app/*"]
   },
   "routes": [
     {

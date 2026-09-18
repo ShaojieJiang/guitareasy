@@ -141,3 +141,48 @@ body {
   text-align: center;
   padding: 2rem;
 }
+
+.player-bridge {
+  position: relative;
+  width: 100%;
+  height: 640px;
+  min-height: 320px;
+}
+
+.player-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--at-bg);
+}
+
+.bridge-status {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 2rem;
+  color: var(--at-muted);
+  background: var(--at-bg);
+  font-size: 0.9rem;
+}
+
+.bridge-status[hidden] {
+  display: none;
+}
+
+html.is-bridge-player,
+html.is-bridge-player body,
+html.is-bridge-player #app {
+  height: 640px;
+}
+
+@media (max-width: 560px) {
+  .player-bridge,
+  html.is-bridge-player,
+  html.is-bridge-player body,
+  html.is-bridge-player #app {
+    height: 520px;
+  }
+}

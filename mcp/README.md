@@ -18,11 +18,13 @@ UI resource).
   `@modelcontextprotocol/server`) exposing `upload_atex`, `download_atex`, `list_atex_files`, and
   `play_atex` (the MCP-App-linked tool), backed by Workers KV.
 - `app/` — a standalone Vite project that builds the alphaTab player UI shown inside the host's
-  iframe. Reuses the same `@coderline/alphatab-vite` plugin as the main GuitarEasy app, so MIDI
-  playback (Web Worker + AudioWorklet) works the same way. Built into `worker`'s static assets,
-  namespaced under `/mcp-app/*` — deliberately not `/mcp/*`, which would collide with the JSON-RPC
-  endpoint at the exact path `/mcp`, or with the main app's own `/font/`, `/soundfont/`, `/assets/`
-  paths on the shared `guitareasy.app` domain.
+  iframe. Reuses the same `@coderline/alphatab-vite` plugin as the main GuitarEasy app. ChatGPT's
+  MCP sandbox runs a small bridge that forwards the tool result into a permitted first-party
+  `guitareasy.app` frame, where alphaTab renders on the UI thread and uses its ScriptProcessor audio
+  path. This avoids the sandbox restrictions that can prevent alphaTab's synthesizer from becoming
+  ready. Assets are namespaced under `/mcp-app/*` — deliberately not `/mcp/*`, which would collide
+  with the JSON-RPC endpoint at `/mcp`, or with the main app's own `/font/`, `/soundfont/`, and
+  `/assets/` paths on the shared domain.
 - `desktop-extension/` — a [Claude Desktop Extension](desktop-extension/README.md) (`.mcpb`) that
   bundles a local proxy pointed at the deployed server, for one-click install in Claude Desktop.
 
@@ -53,7 +55,10 @@ tools. This is OpenAI's current Apps SDK connection flow for personal/dev use �
 submission needed. (The legacy 2023 "ChatGPT plugin" `ai-plugin.json`/OpenAPI format this
 superseded is retired.) A public App Store listing is a separate, much larger path requiring
 OpenAI review, branding assets, and a privacy policy — not set up here. Developer mode
-availability can depend on account/workspace policy.
+availability can depend on account/workspace policy. After deploying a tool descriptor or UI
+resource change, open **Settings → Plugins → GuitarEasy → Manage → Refresh** before testing in a
+new chat. ChatGPT snapshots the template used by an existing response, so old widget cards do not
+adopt a newer resource URI or bundle after deployment.
 
 **Claude Code** — connects and can call the tools, but per the caveat above won't render the
 player inline; only the tools' fallback text.
@@ -81,10 +86,12 @@ npm run deploy
 ```
 
 Routed to `guitareasy.app/mcp*` (see `routes` in `wrangler.jsonc`), on the same Cloudflare account
-and zone as the main app's Pages deployment. `run_worker_first: ["/mcp"]` is required there:
+and zone as the main app's Pages deployment. `run_worker_first: ["/mcp", "/mcp-app/*"]` is required there:
 Cloudflare's default asset routing otherwise claims the whole matched route path space once any
 asset falls under it, and 405s non-GET requests (i.e. the actual JSON-RPC calls) to unmatched
-sub-paths instead of falling through to the Worker. Configuring `routes` disables the `workers.dev`
+sub-paths instead of falling through to the Worker. The player asset rule also lets the Worker add
+CORS headers required when ChatGPT loads the module bundle, fonts, and soundfont from its sandbox
+iframe. Configuring `routes` disables the `workers.dev`
 URL by default (add `"workers_dev": true` to `wrangler.jsonc` to keep both).
 
 Storage uses Workers KV rather than R2, since `.atex` files are small plain text and KV needed no
