@@ -11,10 +11,12 @@ export interface Env {
 // Resource URIs are cache keys in MCP Apps hosts. Bump this when the HTML,
 // bundle, or security policy changes so hosts do not keep an older broken
 // widget after a deployment.
-const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v9.html'
+const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v11.html'
 // Keep older cache keys readable for ChatGPT connections that have not
 // refreshed their tool descriptor since a previous UI deployment.
 const LEGACY_PLAYER_RESOURCE_URIS = [
+  'ui://guitareasy/player/v10.html',
+  'ui://guitareasy/player/v9.html',
   'ui://guitareasy/player/v8.html',
   'ui://guitareasy/player/v7.html',
   'ui://guitareasy/player/v6.html',

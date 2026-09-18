@@ -5,6 +5,8 @@
   --at-muted: #6b7280;
   --at-border: #e5e7eb;
   --at-accent: #4f46e5;
+  --cursor-bar: rgba(119, 112, 183, 0.12);
+  --cursor-beat: #5b4dc1;
 }
 
 :root[data-theme='dark'] {
@@ -13,6 +15,8 @@
   --at-muted: #9ca3af;
   --at-border: #2a2d37;
   --at-accent: #818cf8;
+  --cursor-bar: rgba(119, 112, 183, 0.14);
+  --cursor-beat: #6b5bdf;
 }
 
 * {
@@ -74,6 +78,27 @@ body {
   flex: 1;
   overflow: auto;
   padding: 0.5rem 1rem 1rem;
+}
+
+.notation-canvas .at-cursor-bar {
+  z-index: 4;
+  background: var(--cursor-bar) !important;
+  border-radius: 4px;
+  pointer-events: none;
+}
+
+.notation-canvas .at-cursor-beat {
+  z-index: 5;
+  width: 300px !important;
+  min-width: 300px !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  background: var(--cursor-beat) !important;
+  border-radius: 3px;
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--cursor-beat) 16%, transparent),
+    0 0 10px color-mix(in srgb, var(--cursor-beat) 38%, transparent);
+  pointer-events: none;
 }
 
 .player-bar {

@@ -201,7 +201,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       </div>
       <div class="player-status" id="status">Waiting for a score…</div>
       <div class="notation-viewport" id="notation-viewport">
-        <div id="notation-canvas"></div>
+        <div class="notation-canvas" id="notation-canvas"></div>
       </div>
       <div class="player-bar" id="player-bar" hidden>
         <button id="play-pause" type="button" aria-label="Play or pause" disabled>▶</button>
@@ -226,15 +226,14 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
   let isSynthReady = false
   let hasScore = false
   let currentScore: ScorePayload | undefined
-
-  if (isBridgePlayer) {
-    playPauseButton.textContent = '↗'
-    playPauseButton.setAttribute('aria-label', 'Open audio player')
-    playPauseButton.title = 'Open audio player'
-    stopButton.hidden = true
-    playerProgress.hidden = true
-    position.hidden = true
-  }
+  // The nested bridge frame is a real guitareasy.app document, so it plays
+  // audio inline like the main site — no host sandbox restrictions apply to
+  // it the way they can to the outer widget frame. `audioBridgeFailed` is
+  // only set true if that inline playback genuinely can't start (a host
+  // whose nesting still blocks Web Audio), and only then do we fall back to
+  // asking the host to open the score as a first-party page.
+  let audioBridgeFailed = false
+  let readinessTimer: ReturnType<typeof setTimeout> | undefined
 
   function formatDuration(milliseconds: number) {
     const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000))
@@ -248,13 +247,30 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
   }
 
   function updateControls() {
-    if (isBridgePlayer) {
+    if (audioBridgeFailed) {
       playPauseButton.disabled = !hasScore || !currentScore?.playbackUrl
       stopButton.disabled = true
       return
     }
     playPauseButton.disabled = !isSynthReady || !hasScore
     stopButton.disabled = !isSynthReady || !hasScore
+  }
+
+  function enterAudioFallbackMode(message: string) {
+    if (audioBridgeFailed) return
+    audioBridgeFailed = true
+    if (readinessTimer !== undefined) {
+      clearTimeout(readinessTimer)
+      readinessTimer = undefined
+    }
+    playPauseButton.textContent = '↗'
+    playPauseButton.setAttribute('aria-label', 'Open audio player')
+    playPauseButton.title = 'Open audio player'
+    stopButton.hidden = true
+    playerProgress.hidden = true
+    position.hidden = true
+    updateControls()
+    setStatus(message)
   }
 
   const api = new alphaTab.AlphaTabApi(notationCanvas, {
@@ -269,23 +285,44 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       staveProfile: alphaTab.StaveProfile.Tab,
     },
     player: {
-      enablePlayer: !isBridgePlayer,
+      enablePlayer: true,
       enableCursor: true,
       enableAnimatedBeatCursor: true,
       enableElementHighlighting: true,
-      soundFont: isBridgePlayer
-        ? undefined
-        : `${PLAYER_ASSET_ORIGIN}/mcp-app/soundfont/sonivox.sf2`,
+      // AudioWorklets load their processor module over a separate blob-URL
+      // step that a nested frame's inherited host CSP can block even when
+      // ordinary script/fetch works fine. The legacy ScriptProcessor path
+      // has no such module-loading step, so the bridge frame uses it to
+      // avoid depending on that being permitted.
+      outputMode: isBridgePlayer
+        ? alphaTab.PlayerOutputMode.WebAudioScriptProcessor
+        : alphaTab.PlayerOutputMode.WebAudioAudioWorklets,
+      soundFont: `${PLAYER_ASSET_ORIGIN}/mcp-app/soundfont/sonivox.sf2`,
       scrollElement: notationViewport,
       scrollMode: alphaTab.ScrollMode.OffScreen,
       scrollOffsetY: -24,
     },
   })
 
+  // Give inline audio a chance to come up; if the synth never becomes ready
+  // in a host that blocks it, degrade to the open-a-page flow instead of
+  // leaving the play button silently non-functional. Reset on soundfont
+  // load progress below so a slow connection doesn't trip it prematurely —
+  // only a real stall counts.
+  function scheduleReadinessTimeout() {
+    if (readinessTimer !== undefined) clearTimeout(readinessTimer)
+    readinessTimer = setTimeout(() => {
+      if (!isSynthReady) {
+        enterAudioFallbackMode('Audio isn’t available here — open the audio player to listen.')
+      }
+    }, 8000)
+  }
+  if (isBridgePlayer) scheduleReadinessTimeout()
+
   api.renderStarted.on(() => setStatus('Rendering score…'))
   api.renderFinished.on(() => {
     if (!hasScore) setStatus('Waiting for a score…')
-    else if (isBridgePlayer) setStatus('Score ready — open the audio player to listen.')
+    else if (audioBridgeFailed) setStatus('Score ready — open the audio player to listen.')
     else setStatus(isSynthReady ? 'Ready to play.' : 'Loading sound font…')
   })
   api.scoreLoaded.on((score) => {
@@ -294,15 +331,25 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
     songArtist.textContent = score.artist ? `· ${score.artist}` : ''
     playerBar.hidden = false
     updateControls()
-    if (isBridgePlayer) setStatus('Score ready — open the audio player to listen.')
+    if (audioBridgeFailed) setStatus('Score ready — open the audio player to listen.')
   })
-  api.error.on((error) => setStatus(error.message || 'alphaTab could not render this score.'))
+  api.error.on((error) => {
+    setStatus(error.message || 'alphaTab could not render this score.')
+    if (isBridgePlayer && !isSynthReady) {
+      enterAudioFallbackMode('Audio isn’t available here — open the audio player to listen.')
+    }
+  })
   api.soundFontLoad.on((event) => {
     const percentage = event.total > 0 ? Math.floor((event.loaded / event.total) * 100) : 0
     setStatus(`Loading sound font… ${percentage}%`)
+    if (isBridgePlayer && !isSynthReady && !audioBridgeFailed) scheduleReadinessTimeout()
   })
   api.playerReady.on(() => {
     isSynthReady = true
+    if (readinessTimer !== undefined) {
+      clearTimeout(readinessTimer)
+      readinessTimer = undefined
+    }
     updateControls()
     setStatus(hasScore ? 'Ready to play.' : 'Waiting for a score…')
   })
@@ -317,12 +364,16 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
     progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`
   })
 
+  function openFallbackPlayer() {
+    const url = currentScore?.playbackUrl
+    if (!url || !isTrustedPlaybackUrl(url)) return
+    setStatus('Opening audio player…')
+    window.parent.postMessage({ type: OPEN_AUDIO_PLAYER_MESSAGE, url } satisfies OpenAudioPlayerMessage, '*')
+  }
+
   playPauseButton.addEventListener('click', () => {
-    if (isBridgePlayer) {
-      const url = currentScore?.playbackUrl
-      if (!url || !isTrustedPlaybackUrl(url)) return
-      setStatus('Opening audio player…')
-      window.parent.postMessage({ type: OPEN_AUDIO_PLAYER_MESSAGE, url } satisfies OpenAudioPlayerMessage, '*')
+    if (audioBridgeFailed) {
+      openFallbackPlayer()
       return
     }
     if (isSynthReady && hasScore) api.playPause()
@@ -336,11 +387,8 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
   document.addEventListener('keydown', (event) => {
     if (event.code !== 'Space' || !hasScore) return
     event.preventDefault()
-    if (isBridgePlayer) {
-      const url = currentScore?.playbackUrl
-      if (!url || !isTrustedPlaybackUrl(url)) return
-      setStatus('Opening audio player…')
-      window.parent.postMessage({ type: OPEN_AUDIO_PLAYER_MESSAGE, url } satisfies OpenAudioPlayerMessage, '*')
+    if (audioBridgeFailed) {
+      openFallbackPlayer()
       return
     }
     if (!isSynthReady) return

@@ -18,13 +18,18 @@ UI resource).
   `@modelcontextprotocol/server`) exposing `upload_atex`, `download_atex`, `list_atex_files`, and
   `play_atex` (the MCP-App-linked tool), backed by Workers KV.
 - `app/` — a standalone Vite project that builds the alphaTab player UI shown inside the host's
-  iframe. Reuses the same `@coderline/alphatab-vite` plugin as the main GuitarEasy app. ChatGPT's
-  MCP sandbox runs a small bridge that forwards the tool result into a permitted first-party
-  `guitareasy.app` frame, where alphaTab renders on the UI thread and uses its ScriptProcessor audio
-  path. This avoids the sandbox restrictions that can prevent alphaTab's synthesizer from becoming
-  ready. Assets are namespaced under `/mcp-app/*` — deliberately not `/mcp/*`, which would collide
-  with the JSON-RPC endpoint at `/mcp`, or with the main app's own `/font/`, `/soundfont/`, and
-  `/assets/` paths on the shared domain.
+  iframe. Reuses the same `@coderline/alphatab-vite` plugin as the main GuitarEasy app. The widget
+  nests a second, first-party `guitareasy.app` frame (the "bridge") inside the host's own widget
+  frame and forwards the tool result into it; alphaTab renders and plays there, using the legacy
+  ScriptProcessor audio output (`PlayerOutputMode.WebAudioScriptProcessor`) instead of AudioWorklets,
+  since a worklet's separate module-loading step is more likely to be blocked by a host-inherited
+  CSP than ordinary script/fetch. This plays inline in the widget on hosts that allow it. If the
+  synth still never becomes ready within a few seconds (a host whose sandbox blocks audio even in
+  the nested frame), the widget falls back to asking the host to open the score as a first-party
+  `guitareasy.app` page instead, via a short-lived playback session URL. Assets are namespaced under
+  `/mcp-app/*` — deliberately not `/mcp/*`, which would collide with the JSON-RPC endpoint at
+  `/mcp`, or with the main app's own `/font/`, `/soundfont/`, and `/assets/` paths on the shared
+  domain.
 - `desktop-extension/` — a [Claude Desktop Extension](desktop-extension/README.md) (`.mcpb`) that
   bundles a local proxy pointed at the deployed server, for one-click install in Claude Desktop.
 
