@@ -28,10 +28,11 @@ export type { Env }
 // Resource URIs are cache keys in MCP Apps hosts. Bump this when the HTML,
 // bundle, or security policy changes so hosts do not keep an older broken
 // widget after a deployment.
-const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v14.html'
+const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v15.html'
 // Keep older cache keys readable for ChatGPT connections that have not
 // refreshed their tool descriptor since a previous UI deployment.
 const LEGACY_PLAYER_RESOURCE_URIS = [
+  'ui://guitareasy/player/v14.html',
   'ui://guitareasy/player/v13.html',
   'ui://guitareasy/player/v12.html',
   'ui://guitareasy/player/v11.html',
@@ -311,8 +312,8 @@ export function createServer(env: Env, request: Request | undefined, userId: str
       title: 'Play alphaTex score',
       description:
         signedIn
-          ? 'Open a saved, built-in, published, or inline alphaTex score in the interactive GuitarEasy player, where the user can play it, save it, publish it, rate it, comment on it, and search for other scores.'
-          : 'Open a built-in, published, or inline alphaTex score in the interactive GuitarEasy player, where the user can play it, read its ratings and comments, and search for other scores.',
+          ? 'Open a saved, built-in, published, or inline alphaTex score in the interactive GuitarEasy tab player.'
+          : 'Open a built-in, published, or inline alphaTex score in the interactive GuitarEasy tab player.',
       inputSchema: z.object({
         id: scoreIdSchema.optional().describe(signedIn ? 'id of a saved, built-in, or published score.' : 'id of a built-in or published score.'),
         tex: z.string().min(1).max(MAX_SCORE_BYTES).optional().describe('Inline alphaTex source, used when no id is given.'),

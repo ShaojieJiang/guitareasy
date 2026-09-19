@@ -63,16 +63,14 @@ Every tool acts as the signed-in GuitarEasy user.
 | `delete_comment(commentId)` | Delete your own comment, or any comment on a score you own. |
 | `play_atex({ id } \| { tex, name }, theme?)` | Open a score in the interactive player. `theme` can be `dark`, `light`, or `system`. |
 
-The player widget has its own search bar (runs on Enter or the Search button) and a community panel
-where the user can save inline scores, publish, rate, and comment without leaving the chat. It
-calls the tools above through the host.
+The player widget shows only the tab player. Searching, saving, publishing, rating, and commenting
+happen through the tools above, which the assistant calls from the chat.
 
 ### Public endpoint
 
 `https://guitareasy.app/mcp/public` needs no sign-in. It offers only `list_atex_files` (built-in
 scores), `download_atex`, `search_scores`, `get_score_details`, and `play_atex`, over built-in and
-published scores. In the player, ratings and comments are shown but saving, rating, and commenting
-are hidden and point to the signed-in endpoint instead.
+published scores.
 
 Scores uploaded to the old shared, anonymous library in KV can still be opened by id with
 `download_atex` and `play_atex`, but are read-only and no longer listed.

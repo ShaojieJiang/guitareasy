@@ -15,8 +15,6 @@ const PLAYER_READY_MESSAGE = 'guitareasy:player-ready'
 const LOAD_SCORE_MESSAGE = 'guitareasy:load-score'
 const HOST_CONTEXT_MESSAGE = 'guitareasy:host-context'
 const OPEN_AUDIO_PLAYER_MESSAGE = 'guitareasy:open-audio-player'
-// Shown on the public endpoint, whose tool results carry no viewer.
-const SIGN_IN_HINT = 'Connect to https://guitareasy.app/mcp and sign in to save, rate, and comment.'
 
 type ScoreRenderPalette = {
   staffLineColor: string
@@ -47,35 +45,7 @@ const SCORE_RENDER_PALETTES: Record<McpUiTheme, ScoreRenderPalette> = {
 }
 
 type ThemePreference = McpUiTheme | 'system'
-type ScoreSummary = {
-  id: string
-  name: string
-  title: string
-  artist: string
-  builtIn: boolean
-  owner: { id: string; displayName: string } | null
-  isOwner: boolean
-  isPublished: boolean
-  rating: { average: number | null; count: number; mine: number | null }
-  commentCount: number
-}
-type Comment = {
-  id: string
-  body: string
-  author: { id: string; displayName: string }
-  canDelete: boolean
-  createdAt: string
-}
-type Viewer = { id: string; displayName: string; email: string }
 type ScorePayload = { name: string; tex: string; playbackUrl?: string; theme?: ThemePreference }
-// Everything play_atex returns: the notation for the player plus the
-// account and community state rendered around it.
-type OpenedScore = ScorePayload & {
-  id: string | null
-  score: ScoreSummary | null
-  comments: Comment[]
-  viewer: Viewer | null
-}
 type PlayerReadyMessage = { type: typeof PLAYER_READY_MESSAGE }
 type LoadScoreMessage = { type: typeof LOAD_SCORE_MESSAGE; score: ScorePayload }
 type HostContextMessage = { type: typeof HOST_CONTEXT_MESSAGE; context: McpUiHostContext }
@@ -107,40 +77,20 @@ function applyThemePreference(preference: ThemePreference) {
   nativePlayerThemeChange?.(effectiveTheme)
 }
 
-function extractScore(result: CallToolResult): OpenedScore | undefined {
+function extractScore(result: CallToolResult): ScorePayload | undefined {
   const data = result.structuredContent as
-    | {
-        id?: string | null
-        name?: string
-        tex?: string
-        playbackUrl?: string
-        theme?: unknown
-        score?: ScoreSummary | null
-        comments?: Comment[]
-        viewer?: Viewer | null
-      }
+    | { name?: string; tex?: string; playbackUrl?: string; theme?: unknown }
     | undefined
   if (!data?.tex) return undefined
   const theme = data.theme === 'light' || data.theme === 'dark' || data.theme === 'system'
     ? data.theme
     : 'system'
   return {
-    id: data.id ?? null,
     name: data.name ?? 'Untitled.atex',
     tex: data.tex,
     playbackUrl: data.playbackUrl,
     theme,
-    score: data.score ?? null,
-    comments: Array.isArray(data.comments) ? data.comments : [],
-    viewer: data.viewer ?? null,
   }
-}
-
-function toolResultText(result: CallToolResult) {
-  return result.content
-    ?.map((item) => (item.type === 'text' ? item.text : ''))
-    .filter(Boolean)
-    .join('\n')
 }
 
 function handleHostContextChanged(ctx: McpUiHostContext) {
@@ -162,7 +112,7 @@ function errorMessage(error: unknown) {
 }
 
 function connectToMcpHost(
-  onScore: (score: OpenedScore) => void,
+  onScore: (score: ScorePayload) => void,
   onContext: (context: McpUiHostContext) => void,
   onError: (message: string) => void,
 ) {
@@ -240,52 +190,24 @@ function isTrustedPlaybackUrl(value: string) {
   }
 }
 
-function escapeHtml(value: string) {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;')
-}
-
 function startSandboxBridge() {
   root.innerHTML = `
-    <div class="widget">
-      <div class="widget-toolbar">
-        <form class="widget-search" id="search-form" role="search">
-          <input id="search-input" type="search" enterkeyhint="search" maxlength="200" placeholder="Search songs, artists, or uploaders" aria-label="Search scores" />
-          <button type="submit" class="widget-button">Search</button>
-        </form>
-        <span class="widget-account" id="widget-account"></span>
-      </div>
-      <div class="search-results" id="search-results" hidden></div>
-      <div class="player-bridge">
-        <iframe
-          id="player-frame"
-          class="player-frame"
-          title="GuitarEasy score player"
-          src="${BRIDGE_PLAYER_URL}"
-        ></iframe>
-        <div class="bridge-status" id="bridge-status">Starting score player…</div>
-      </div>
-      <section class="widget-community" id="widget-community" aria-label="Ratings and comments"></section>
+    <div class="player-bridge">
+      <iframe
+        id="player-frame"
+        class="player-frame"
+        title="GuitarEasy score player"
+        src="${BRIDGE_PLAYER_URL}"
+      ></iframe>
+      <div class="bridge-status" id="bridge-status">Starting score player…</div>
     </div>
   `
 
   const frame = document.getElementById('player-frame') as HTMLIFrameElement
   const bridgeStatus = document.getElementById('bridge-status')!
-  const searchForm = document.getElementById('search-form') as HTMLFormElement
-  const searchInput = document.getElementById('search-input') as HTMLInputElement
-  const searchResults = document.getElementById('search-results')!
-  const accountLabel = document.getElementById('widget-account')!
-  const community = document.getElementById('widget-community')!
   let isBridgeReady = false
   let pendingScore: ScorePayload | undefined
   let pendingContext: McpUiHostContext | undefined
-  let opened: OpenedScore | undefined
-  let viewer: Viewer | null = null
-  let communityError = ''
 
   function postToPlayer(message: ParentToPlayerMessage) {
     frame.contentWindow?.postMessage(message, PLAYER_ASSET_ORIGIN)
@@ -296,214 +218,6 @@ function startSandboxBridge() {
     if (pendingContext) postToPlayer({ type: HOST_CONTEXT_MESSAGE, context: pendingContext })
     if (pendingScore) postToPlayer({ type: LOAD_SCORE_MESSAGE, score: pendingScore })
   }
-
-  // Calls a GuitarEasy tool through the host, which attaches the user's
-  // OAuth token; tool errors surface as thrown messages.
-  async function callTool<T>(name: string, args: Record<string, unknown>): Promise<T> {
-    const result = await hostApp.callServerTool({ name, arguments: args })
-    if (result.isError) throw new Error(toolResultText(result) || 'That did not work. Try again.')
-    return result.structuredContent as T
-  }
-
-  function renderAccount() {
-    accountLabel.textContent = viewer ? `Signed in as ${viewer.displayName}` : ''
-  }
-
-  function starText(average: number | null) {
-    const rounded = Math.round(average ?? 0)
-    return '★★★★★'.slice(0, rounded) + '☆☆☆☆☆'.slice(0, 5 - rounded)
-  }
-
-  function renderCommunity() {
-    if (!opened) {
-      community.hidden = true
-      return
-    }
-    community.hidden = false
-    const score = opened.score
-    const parts: string[] = []
-    const heading = score?.owner && !score.isOwner ? `${escapeHtml(opened.name)} · by ${escapeHtml(score.owner.displayName)}` : escapeHtml(opened.name)
-    parts.push(`<div class="community-title"><strong>${heading}</strong></div>`)
-
-    if (!score) {
-      if (viewer) {
-        parts.push('<p class="community-hint">This score is not in your library yet.</p>')
-        parts.push('<button type="button" class="widget-button is-primary" data-action="save">Save to my library</button>')
-      } else {
-        parts.push(`<p class="community-hint">${SIGN_IN_HINT}</p>`)
-      }
-    } else if (score.builtIn) {
-      parts.push('<p class="community-hint">Built-in example scores are not rated or discussed.</p>')
-    } else {
-      if (score.isOwner) {
-        parts.push(`<div class="publish-row"><p class="community-hint">${
-          score.isPublished
-            ? 'Published — anyone on GuitarEasy can find, rate, and comment on this score.'
-            : 'Only you can see this score. Publish it to let other players find, rate, and comment on it.'
-        }</p><button type="button" class="widget-button ${score.isPublished ? '' : 'is-primary'}" data-action="toggle-publish">${
-          score.isPublished ? 'Make private' : 'Publish'
-        }</button></div>`)
-      }
-      if (score.isPublished) {
-        const summary = score.rating.count
-          ? `${score.rating.average?.toFixed(1)} out of 5 · ${score.rating.count} rating${score.rating.count === 1 ? '' : 's'}`
-          : 'No ratings yet'
-        parts.push(`<p class="rating-summary"><span class="stars" aria-hidden="true">${starText(score.rating.average)}</span> ${summary}</p>`)
-        if (viewer && !score.isOwner) {
-          const buttons = [1, 2, 3, 4, 5]
-            .map((value) => `<button type="button" class="star-button ${(score.rating.mine ?? 0) >= value ? 'is-filled' : ''}" data-action="rate" data-stars="${value}" aria-label="Rate ${value} out of 5" aria-pressed="${score.rating.mine === value}">★</button>`)
-            .join('')
-          parts.push(`<div class="star-picker" role="group" aria-label="Your rating"><span>Your rating</span>${buttons}</div>`)
-        }
-        const comments = opened.comments
-          .map((comment) => `<li class="comment"><div class="comment-meta"><strong>${escapeHtml(comment.author.displayName)}</strong><time datetime="${escapeHtml(comment.createdAt)}">${escapeHtml(new Date(comment.createdAt).toLocaleDateString())}</time>${
-            comment.canDelete ? `<button type="button" class="comment-delete" data-action="delete-comment" data-comment-id="${escapeHtml(comment.id)}" aria-label="Delete comment">×</button>` : ''
-          }</div><p>${escapeHtml(comment.body)}</p></li>`)
-          .join('')
-        parts.push(`<h3>Comments (${opened.comments.length})</h3><ol class="comment-list">${comments || '<li class="comment-empty">No comments yet.</li>'}</ol>`)
-        if (!viewer) parts.push(`<p class="community-hint">${SIGN_IN_HINT}</p>`)
-        else parts.push('<form class="comment-form" data-action="comment"><textarea rows="2" maxlength="2000" required placeholder="Share a tip or say thanks…" aria-label="Add a comment"></textarea><button type="submit" class="widget-button is-primary">Post</button></form>')
-      }
-    }
-    if (communityError) parts.push(`<p class="widget-error" role="alert">${escapeHtml(communityError)}</p>`)
-    community.innerHTML = parts.join('')
-  }
-
-  function showOpenedScore(score: OpenedScore) {
-    opened = score
-    if (score.viewer) viewer = score.viewer
-    communityError = ''
-    applyThemePreference(score.theme ?? 'system')
-    pendingScore = { name: score.name, tex: score.tex, playbackUrl: score.playbackUrl, theme: score.theme }
-    if (isBridgeReady) postToPlayer({ type: LOAD_SCORE_MESSAGE, score: pendingScore })
-    else bridgeStatus.textContent = 'Loading score player…'
-    renderAccount()
-    renderCommunity()
-  }
-
-  async function refreshDetails() {
-    if (!opened?.score) return
-    const details = await callTool<{ score: ScoreSummary; comments: Comment[]; viewer: Viewer | null }>('get_score_details', { id: opened.score.id })
-    opened = { ...opened, score: details.score, comments: details.comments }
-    viewer = details.viewer
-  }
-
-  async function runAction(action: () => Promise<void>) {
-    communityError = ''
-    community.classList.add('is-busy')
-    try {
-      await action()
-    } catch (error) {
-      communityError = errorMessage(error)
-    } finally {
-      community.classList.remove('is-busy')
-      renderAccount()
-      renderCommunity()
-    }
-  }
-
-  community.addEventListener('click', (event) => {
-    const button = (event.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]')
-    if (!button || !opened) return
-    const current = opened
-    switch (button.dataset.action) {
-      case 'save':
-        void runAction(async () => {
-          const saved = await callTool<{ score: ScoreSummary }>('upload_atex', { name: current.name, tex: current.tex })
-          opened = { ...current, id: saved.score.id, score: saved.score, comments: [] }
-        })
-        break
-      case 'toggle-publish':
-        void runAction(async () => {
-          const result = await callTool<{ score: ScoreSummary }>('publish_score', { id: current.score!.id, published: !current.score!.isPublished })
-          opened = { ...current, score: result.score }
-          if (result.score.isPublished) await refreshDetails()
-        })
-        break
-      case 'rate':
-        void runAction(async () => {
-          const result = await callTool<{ score: ScoreSummary }>('rate_score', { id: current.score!.id, stars: Number(button.dataset.stars) })
-          opened = { ...current, score: result.score }
-        })
-        break
-      case 'delete-comment':
-        void runAction(async () => {
-          await callTool('delete_comment', { commentId: button.dataset.commentId })
-          await refreshDetails()
-        })
-        break
-    }
-  })
-
-  community.addEventListener('submit', (event) => {
-    const form = (event.target as HTMLElement).closest<HTMLFormElement>('form[data-action="comment"]')
-    if (!form || !opened?.score) return
-    event.preventDefault()
-    const body = form.querySelector('textarea')!.value.trim()
-    if (!body) return
-    const scoreId = opened.score.id
-    void runAction(async () => {
-      await callTool('add_comment', { id: scoreId, body })
-      await refreshDetails()
-    })
-  })
-
-  // Search runs only on submit (Enter or the Search button), never as the
-  // user types.
-  searchForm.addEventListener('submit', (event) => {
-    event.preventDefault()
-    const query = searchInput.value.trim()
-    if (!query) {
-      searchResults.hidden = true
-      return
-    }
-    searchResults.hidden = false
-    searchResults.innerHTML = '<p class="search-status">Searching…</p>'
-    callTool<{ scores: ScoreSummary[] }>('search_scores', { query })
-      .then(({ scores }) => {
-        const rows = scores
-          .map((score) => {
-            const meta = [
-              score.artist,
-              score.builtIn ? 'built-in' : score.isOwner ? (score.isPublished ? 'yours · published' : 'yours · private') : score.owner ? `by ${score.owner.displayName}` : '',
-              score.rating.count ? `★ ${score.rating.average?.toFixed(1)}` : '',
-            ].filter(Boolean).join(' · ')
-            return `<li><button type="button" class="search-result" data-score-id="${escapeHtml(score.id)}"><strong>${escapeHtml(score.name)}</strong><small>${escapeHtml(meta)}</small></button></li>`
-          })
-          .join('')
-        searchResults.innerHTML = `<div class="search-heading"><span>${scores.length} result${scores.length === 1 ? '' : 's'} for “${escapeHtml(query)}”</span><button type="button" class="link-button" data-action="close-search">Close</button></div>${
-          rows ? `<ul>${rows}</ul>` : `<p class="search-status">No scores match “${escapeHtml(query)}”.</p>`
-        }`
-      })
-      .catch((error: unknown) => {
-        searchResults.innerHTML = `<p class="widget-error" role="alert">${escapeHtml(errorMessage(error))}</p>`
-      })
-  })
-
-  searchResults.addEventListener('click', (event) => {
-    const target = event.target as HTMLElement
-    if (target.closest('[data-action="close-search"]')) {
-      searchResults.hidden = true
-      return
-    }
-    const result = target.closest<HTMLButtonElement>('[data-score-id]')
-    if (!result) return
-    result.disabled = true
-    hostApp
-      .callServerTool({ name: 'play_atex', arguments: { id: result.dataset.scoreId, theme: requestedTheme } })
-      .then((toolResult) => {
-        if (toolResult.isError) throw new Error(toolResultText(toolResult) || 'That score could not be opened.')
-        const score = extractScore(toolResult)
-        if (!score) throw new Error('That score could not be opened.')
-        searchResults.hidden = true
-        showOpenedScore(score)
-      })
-      .catch((error: unknown) => {
-        result.disabled = false
-        communityError = errorMessage(error)
-        renderCommunity()
-      })
-  })
 
   window.addEventListener('message', async (event) => {
     if (event.origin !== PLAYER_ASSET_ORIGIN || event.source !== frame.contentWindow) return
@@ -529,9 +243,12 @@ function startSandboxBridge() {
     bridgeStatus.textContent = 'The audio player could not be loaded.'
   })
 
-  renderCommunity()
   const hostApp = connectToMcpHost(
-    showOpenedScore,
+    (score) => {
+      pendingScore = score
+      if (isBridgeReady) postToPlayer({ type: LOAD_SCORE_MESSAGE, score })
+      else bridgeStatus.textContent = 'Loading score player…'
+    },
     (context) => {
       pendingContext = context
       if (isBridgeReady) postToPlayer({ type: HOST_CONTEXT_MESSAGE, context })
