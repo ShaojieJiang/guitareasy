@@ -929,26 +929,35 @@ function openAuthDialog(message = '') {
   if (!authUnavailable) authEmail.focus()
 }
 
+// Matches MAX_IMPORT_SCORES in mcp/worker/src/scores.ts.
+const maxImportScores = 100
+
 // Local scores upload once the visitor signs in. Each keeps its browser id
 // as the upload key, so a retried upload never creates a duplicate.
 async function syncLocalScores() {
   const localScores = scoreLibrary.filter((score) => score.source === 'local' && score.tex)
   if (!localScores.length) return
-  let result
-  try {
-    result = await cloudApi.importScores(localScores.map((score) => ({ clientId: score.id, name: score.name, tex: score.tex! })))
-  } catch {
-    setLibraryNotice('syncFailed')
-    return
-  }
-  for (const { clientId, score } of result.imported) {
-    const local = localScores.find((item) => item.id === clientId)
-    const record = cloudRecord(score, local?.tex)
-    scoreLibrary = scoreLibrary.map((item) => (item.id === clientId ? record : item))
-    if (activeScore.id === clientId) activeScore = record
+  let failed = false
+  // The API accepts at most MAX_IMPORT_SCORES per request.
+  for (let start = 0; start < localScores.length; start += maxImportScores) {
+    const batch = localScores.slice(start, start + maxImportScores)
+    let result
+    try {
+      result = await cloudApi.importScores(batch.map((score) => ({ clientId: score.id, name: score.name, tex: score.tex! })))
+    } catch {
+      failed = true
+      continue
+    }
+    for (const { clientId, score } of result.imported) {
+      const local = batch.find((item) => item.id === clientId)
+      const record = cloudRecord(score, local?.tex)
+      scoreLibrary = scoreLibrary.map((item) => (item.id === clientId ? record : item))
+      if (activeScore.id === clientId) activeScore = record
+    }
+    if (result.failed.length) failed = true
   }
   persistScoreLibrary()
-  setLibraryNotice(result.failed.length ? 'syncFailed' : undefined)
+  setLibraryNotice(failed ? 'syncFailed' : undefined)
 }
 
 async function loadCloudLibrary() {

@@ -31,7 +31,12 @@ const OAUTH_NONCE_COOKIE_PATH = '/api/auth/oauth'
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000
 const CHALLENGE_TTL_MS = 10 * 60 * 1000
 const MAX_CHALLENGE_ATTEMPTS = 5
-const MAX_CHALLENGES_PER_EMAIL = 5
+// Each network gets its own budget per address, so someone requesting codes
+// for another person's email cannot lock that person out from their own
+// connection. The higher overall cap still limits how many emails one
+// address can be sent.
+const MAX_CHALLENGES_PER_EMAIL_AND_IP = 5
+const MAX_CHALLENGES_PER_EMAIL = 20
 const MAX_CHALLENGES_PER_IP = 20
 const CHALLENGE_WINDOW_MS = 60 * 60 * 1000
 const DEV_AUTH_SECRET = 'guitareasy-local-development-secret'
@@ -135,6 +140,16 @@ export async function destroySession(env: Env, request: Request) {
   if (token) await env.DB.prepare('DELETE FROM sessions WHERE id = ?').bind(await sha256(token)).run()
 }
 
+// Run daily by the cron trigger. Challenges are kept for the whole rate-limit
+// window, since the limits count them, even after they expire.
+export async function deleteExpiredAuthRows(env: Env) {
+  const now = Date.now()
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM sessions WHERE expires_at <= ?').bind(now),
+    env.DB.prepare('DELETE FROM auth_challenges WHERE created_at <= ?').bind(now - CHALLENGE_WINDOW_MS),
+  ])
+}
+
 // ---------------------------------------------------------------------------
 // Email one-time codes
 
@@ -143,11 +158,17 @@ export async function startEmailChallenge(env: Env, request: Request, emailInput
   const ip = clientIp(request)
   const now = Date.now()
   const since = now - CHALLENGE_WINDOW_MS
-  const [byEmail, byIp] = await env.DB.batch<{ count: number }>([
+  const [byEmailAndIp, byEmail, byIp] = await env.DB.batch<{ count: number }>([
+    env.DB.prepare('SELECT COUNT(*) AS count FROM auth_challenges WHERE email = ? AND ip = ? AND created_at > ?').bind(
+      email,
+      ip,
+      since,
+    ),
     env.DB.prepare('SELECT COUNT(*) AS count FROM auth_challenges WHERE email = ? AND created_at > ?').bind(email, since),
     env.DB.prepare('SELECT COUNT(*) AS count FROM auth_challenges WHERE ip = ? AND created_at > ?').bind(ip, since),
   ])
   if (
+    (byEmailAndIp?.results[0]?.count ?? 0) >= MAX_CHALLENGES_PER_EMAIL_AND_IP ||
     (byEmail?.results[0]?.count ?? 0) >= MAX_CHALLENGES_PER_EMAIL ||
     (byIp?.results[0]?.count ?? 0) >= MAX_CHALLENGES_PER_IP
   ) {

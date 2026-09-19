@@ -71,7 +71,7 @@ const authErrorMessages: Record<string, string> = {
   email_unverified: 'That account’s email address is not verified.',
 }
 
-function signInPage(env: Env, request: Request, clientName: string) {
+function signInPage(env: Env, request: Request, clientName: string, redirectHost: string) {
   const url = new URL(request.url)
   const authError = url.searchParams.get('auth_error')
   url.searchParams.delete('auth_error')
@@ -87,7 +87,7 @@ function signInPage(env: Env, request: Request, clientName: string) {
 
   const body = `
 <h1>Sign in to continue</h1>
-<p><strong>${escapeHtml(clientName)}</strong> wants to connect to your GuitarEasy score library.</p>
+<p>An app calling itself <strong>${escapeHtml(clientName)}</strong> at <strong>${escapeHtml(redirectHost)}</strong> wants to connect to your GuitarEasy score library.</p>
 ${providerButtons ? `<div class="stack">${providerButtons}</div><div class="divider">or use email</div>` : ''}
 <form id="email-form" class="stack">
   <label>Email<input id="email" type="email" autocomplete="email" required /></label>
@@ -140,7 +140,25 @@ document.getElementById('restart').addEventListener('click', () => {
   return page('Sign in', body, script)
 }
 
-async function consentPage(env: Env, request: Request, user: User, clientId: string, clientName: string) {
+// Any app can register itself under any name, so the name alone could be an
+// impersonation. The redirect host is where the access grant is sent, and is
+// what the user should check before allowing access.
+function redirectHostOf(authRequest: AuthRequest) {
+  try {
+    return new URL(authRequest.redirectUri).host || authRequest.redirectUri
+  } catch {
+    return authRequest.redirectUri
+  }
+}
+
+async function consentPage(
+  env: Env,
+  request: Request,
+  user: User,
+  clientId: string,
+  clientName: string,
+  redirectHost: string,
+) {
   const token = await signPayload(consentSecret(env), {
     userId: user.id,
     clientId,
@@ -149,7 +167,8 @@ async function consentPage(env: Env, request: Request, user: User, clientId: str
   const url = new URL(request.url)
   const body = `
 <h1>Allow access?</h1>
-<p><strong>${escapeHtml(clientName)}</strong> will be able to read, save, publish, rate, and comment on scores as <strong>${escapeHtml(user.displayName)}</strong> (${escapeHtml(user.email)}).</p>
+<p>An app calling itself <strong>${escapeHtml(clientName)}</strong> will be able to read, save, delete, publish, rate, and comment on scores as <strong>${escapeHtml(user.displayName)}</strong> (${escapeHtml(user.email)}).</p>
+<p>Access will be sent to <strong>${escapeHtml(redirectHost)}</strong>. Only allow this if you recognize that site.</p>
 <form method="post" action="${escapeHtml(`${url.pathname}${url.search}`)}">
   <input type="hidden" name="consent" value="${escapeHtml(token)}" />
   <div class="row">
@@ -185,11 +204,14 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
   }
   const client = await env.OAUTH_PROVIDER.lookupClient(authRequest.clientId)
   if (!client) return page('Unknown app', '<h1>Unknown app</h1><p>This app is not registered with GuitarEasy.</p>')
-  const clientName = client.clientName || 'An AI assistant'
+  const clientName = client.clientName || 'Unnamed app'
+  const redirectHost = redirectHostOf(authRequest)
 
   const user = await getSessionUser(env, request)
   if (request.method === 'GET') {
-    return user ? consentPage(env, request, user, client.clientId, clientName) : signInPage(env, request, clientName)
+    return user
+      ? consentPage(env, request, user, client.clientId, clientName, redirectHost)
+      : signInPage(env, request, clientName, redirectHost)
   }
   if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 })
 
@@ -200,7 +222,9 @@ export async function handleAuthorize(request: Request, env: Env): Promise<Respo
   const form = await request.formData()
   const consent = await verifyPayload<ConsentToken>(consentSecret(env), String(form.get('consent') ?? ''))
   if (!user || !consent || consent.userId !== user.id || consent.clientId !== client.clientId || consent.expiresAt <= Date.now()) {
-    return user ? consentPage(env, request, user, client.clientId, clientName) : signInPage(env, request, clientName)
+    return user
+      ? consentPage(env, request, user, client.clientId, clientName, redirectHost)
+      : signInPage(env, request, clientName, redirectHost)
   }
   if (form.get('decision') !== 'allow') return redirectWithError(authRequest, 'access_denied')
 

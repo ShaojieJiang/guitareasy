@@ -113,7 +113,14 @@ export function parseCookies(request: Request) {
     const index = part.indexOf('=')
     if (index < 0) continue
     const name = part.slice(0, index).trim()
-    if (name) cookies.set(name, decodeURIComponent(part.slice(index + 1).trim()))
+    if (!name) continue
+    // Other cookies on the domain may not be percent-encoded; skip any that
+    // fail to decode rather than failing the whole request.
+    try {
+      cookies.set(name, decodeURIComponent(part.slice(index + 1).trim()))
+    } catch {
+      // Malformed value; ignore this cookie.
+    }
   }
   return cookies
 }

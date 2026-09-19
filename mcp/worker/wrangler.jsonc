@@ -14,6 +14,8 @@
   // APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY, and the SMTP_* settings
   // for sign-in emails (SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD,
   // SMTP_FROM, SMTP_FROM_NAME, SMTP_STARTTLS).
+  // Daily cleanup of expired sessions and sign-in codes.
+  "triggers": { "crons": ["17 3 * * *"] },
   "d1_databases": [
     {
       "binding": "DB",

@@ -101,10 +101,14 @@ export function normalizeScoreName(value: unknown) {
   return name.slice(0, 200)
 }
 
+export function byteLength(value: string) {
+  return new TextEncoder().encode(value).length
+}
+
 export function validateTex(value: unknown) {
   const tex = typeof value === 'string' ? value.trim() : ''
   if (!tex) throw new HttpError(400, 'empty_score', 'The score has no alphaTex notation.')
-  if (new TextEncoder().encode(tex).length > MAX_SCORE_BYTES) {
+  if (byteLength(tex) > MAX_SCORE_BYTES) {
     throw new HttpError(413, 'score_too_large', `Scores are limited to ${MAX_SCORE_BYTES / 1024} KB.`)
   }
   return tex
@@ -179,7 +183,7 @@ export async function createScore(
       readTexMetadata(tex, 'title'),
       readTexMetadata(tex, 'artist'),
       tex,
-      tex.length,
+      byteLength(tex),
       input.published === true ? now : null,
       now,
       now,
@@ -237,7 +241,7 @@ export async function updateScore(
       .bind(
         name,
         tex,
-        tex.length,
+        byteLength(tex),
         readTexMetadata(tex, 'title'),
         readTexMetadata(tex, 'artist'),
         publishedAt,

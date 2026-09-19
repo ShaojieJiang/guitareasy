@@ -1,6 +1,7 @@
 import { OAuthProvider } from '@cloudflare/workers-oauth-provider'
 import { createMcpHandler } from 'agents/mcp/server'
 import { handleApi } from './api'
+import { deleteExpiredAuthRows } from './auth'
 import { handleAuthorize } from './authorize'
 import type { Env } from './env'
 import { createServer, PLAYER_SESSION_KEY_PREFIX } from './server'
@@ -124,5 +125,8 @@ export default {
     if (pathname.startsWith(PLAYER_ASSET_PREFIX)) return siteHandler.fetch(request, env)
     if (pathname === PUBLIC_MCP_PATH) return publicMcpHandler.fetch(request, env, ctx)
     return oauthProvider.fetch(request, env, ctx)
+  },
+  scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(deleteExpiredAuthRows(env))
   },
 } satisfies ExportedHandler<Env>

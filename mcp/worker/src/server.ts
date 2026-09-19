@@ -5,6 +5,7 @@ import { getUser, type User } from './auth'
 import type { Env } from './env'
 import {
   addComment,
+  byteLength,
   createScore,
   deleteComment,
   deleteScore,
@@ -129,7 +130,7 @@ function seedSummary(seed: (typeof seedScores)[number]): ToolScoreSummary {
     title: readTexMetadata(seed.tex, 'title'),
     artist: readTexMetadata(seed.tex, 'artist'),
     builtIn: true,
-    size: seed.tex.length,
+    size: byteLength(seed.tex),
     owner: null,
     isOwner: false,
     isPublished: false,
