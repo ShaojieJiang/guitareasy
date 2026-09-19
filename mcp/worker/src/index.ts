@@ -8,6 +8,7 @@ import { createServer, PLAYER_SESSION_KEY_PREFIX } from './server'
 const PLAYER_ASSET_PREFIX = '/mcp-app/'
 const PLAYER_SESSION_PATH_PREFIX = '/mcp-app/session/'
 const AUTHORIZE_PATH = '/oauth/authorize'
+const PUBLIC_MCP_PATH = '/mcp/public'
 
 async function servePlayerSession(request: Request, env: Env, pathname: string): Promise<Response> {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -87,6 +88,17 @@ const mcpHandler = {
   },
 } satisfies ExportedHandler<Env>
 
+// The same server without an account: read-only tools and the player over
+// built-in and published scores, for hosts or people that do not sign in.
+const publicMcpHandler = {
+  fetch(request: Request, env: Env, ctx: ExecutionContext) {
+    const handler = createMcpHandler((mcpContext) => createServer(env, mcpContext.requestInfo, null), {
+      route: PUBLIC_MCP_PATH,
+    })
+    return handler(request, env, ctx)
+  },
+} satisfies ExportedHandler<Env>
+
 // MCP clients (Claude, ChatGPT, …) discover the authorization server from
 // /.well-known metadata, register dynamically, and send the user through
 // /oauth/authorize, which signs them in with the same Google, Apple, or
@@ -107,7 +119,10 @@ export default {
   fetch(request: Request, env: Env, ctx: ExecutionContext) {
     // The provider matches apiRoute as a path prefix, so "/mcp" would also
     // claim the public "/mcp-app/" player assets. Serve those first.
-    if (new URL(request.url).pathname.startsWith(PLAYER_ASSET_PREFIX)) return siteHandler.fetch(request, env)
+    // It would also claim "/mcp/public", which needs no token.
+    const pathname = new URL(request.url).pathname
+    if (pathname.startsWith(PLAYER_ASSET_PREFIX)) return siteHandler.fetch(request, env)
+    if (pathname === PUBLIC_MCP_PATH) return publicMcpHandler.fetch(request, env, ctx)
     return oauthProvider.fetch(request, env, ctx)
   },
 } satisfies ExportedHandler<Env>

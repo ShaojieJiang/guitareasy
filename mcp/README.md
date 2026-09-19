@@ -1,6 +1,8 @@
 # GuitarEasy MCP server
 
 Deployed at **https://guitareasy.app/mcp** (Streamable HTTP).
+A read-only version that needs no account is at **https://guitareasy.app/mcp/public** (see
+[Public endpoint](#public-endpoint)).
 
 A remote [MCP](https://modelcontextprotocol.io) server for GuitarEasy: upload, download, and list
 `.atex` (alphaTex) guitar tab files, and open one in an interactive alphaTab player rendered
@@ -64,6 +66,13 @@ Every tool acts as the signed-in GuitarEasy user.
 The player widget has its own search bar (runs on Enter or the Search button) and a community panel
 where the user can save inline scores, publish, rate, and comment without leaving the chat. It
 calls the tools above through the host.
+
+### Public endpoint
+
+`https://guitareasy.app/mcp/public` needs no sign-in. It offers only `list_atex_files` (built-in
+scores), `download_atex`, `search_scores`, `get_score_details`, and `play_atex`, over built-in and
+published scores. In the player, ratings and comments are shown but saving, rating, and commenting
+are hidden and point to the signed-in endpoint instead.
 
 Scores uploaded to the old shared, anonymous library in KV can still be opened by id with
 `download_atex` and `play_atex`, but are read-only and no longer listed.

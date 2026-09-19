@@ -18,8 +18,7 @@
     {
       "binding": "DB",
       "database_name": "guitareasy",
-      // Replace with the id printed by `npx wrangler d1 create guitareasy`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      "database_id": "d84f6a39-9031-40d4-b490-c1ccdc18e13c",
       "migrations_dir": "migrations"
     }
   ],
@@ -49,7 +48,7 @@
     // falling through — which would swallow POST/DELETE /mcp, the actual
     // JSON-RPC endpoint. The player assets also go through the Worker first
     // so it can add CORS headers required by ChatGPT's sandbox iframe.
-    "run_worker_first": ["/mcp", "/mcp-app/*", "/api/*", "/oauth/*", "/.well-known/*"]
+    "run_worker_first": ["/mcp", "/mcp/public", "/mcp-app/*", "/api/*", "/oauth/*", "/.well-known/*"]
   },
   "routes": [
     { "pattern": "guitareasy.app/mcp*", "zone_name": "guitareasy.app" },

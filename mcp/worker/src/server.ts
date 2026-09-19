@@ -11,6 +11,7 @@ import {
   getScore,
   listComments,
   listOwnScores,
+  MAX_SCORE_BYTES,
   rateScore,
   readTexMetadata,
   searchScores,
@@ -26,10 +27,11 @@ export type { Env }
 // Resource URIs are cache keys in MCP Apps hosts. Bump this when the HTML,
 // bundle, or security policy changes so hosts do not keep an older broken
 // widget after a deployment.
-const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v13.html'
+const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v14.html'
 // Keep older cache keys readable for ChatGPT connections that have not
 // refreshed their tool descriptor since a previous UI deployment.
 const LEGACY_PLAYER_RESOURCE_URIS = [
+  'ui://guitareasy/player/v13.html',
   'ui://guitareasy/player/v12.html',
   'ui://guitareasy/player/v11.html',
   'ui://guitareasy/player/v10.html',
@@ -160,7 +162,7 @@ type ResolvedScore = {
 // Scores come from the signed-in user's library or published scores in D1,
 // the built-in seeds, or — for links from older conversations — the
 // pre-account shared KV store, which is now read-only.
-async function resolveScore(env: Env, id: string, viewerId: string): Promise<ResolvedScore> {
+async function resolveScore(env: Env, id: string, viewerId: string | null): Promise<ResolvedScore> {
   const seed = seedScores.find((score) => score.id === id)
   if (seed) return { name: seed.name, tex: seed.tex, summary: seedSummary(seed) }
   try {
@@ -174,19 +176,245 @@ async function resolveScore(env: Env, id: string, viewerId: string): Promise<Res
   }
 }
 
-export function createServer(env: Env, request: Request | undefined, userId: string): McpServer {
+// With a userId, every tool acts as that signed-in user. Without one (the
+// public /mcp/public endpoint), only the read-only tools and the player are
+// registered, and they see built-in and published scores.
+export function createServer(env: Env, request: Request | undefined, userId: string | null): McpServer {
   const server = new McpServer({ name: 'GuitarEasy alphaTex Server', version: '2.0.0' })
   let cachedUser: Promise<User | undefined> | undefined
   const currentUser = async () => {
+    if (!userId) throw new HttpError(401, 'sign_in_required', 'Connect to https://guitareasy.app/mcp and sign in to do this.')
     cachedUser ??= getUser(env, userId)
     const user = await cachedUser
     if (!user) throw new HttpError(401, 'account_missing', 'This GuitarEasy account no longer exists. Reconnect to sign in again.')
     return user
   }
   const viewer = async () => {
+    if (!userId) return null
     const user = await currentUser()
     return { id: user.id, displayName: user.displayName, email: user.email }
   }
+  // Confirms the account still exists before acting for it.
+  const viewerId = async () => (userId ? (await currentUser()).id : null)
+  const signedIn = userId !== null
+
+  server.registerTool(
+    'download_atex',
+    {
+      title: 'Download alphaTex file',
+      description: signedIn
+        ? "Retrieve the alphaTex source of a built-in score, one of the user's scores, or a published score."
+        : 'Retrieve the alphaTex source of a built-in or published score.',
+      inputSchema: z.object({ id: scoreIdSchema }),
+      outputSchema: z.object({ id: z.string(), name: z.string(), tex: z.string() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      try {
+        const score = await resolveScore(env, id, await viewerId())
+        return {
+          content: [{ type: 'text', text: score.tex }],
+          structuredContent: { id, name: score.name, tex: score.tex },
+        }
+      } catch (error) {
+        return toolError(error)
+      }
+    },
+  )
+
+  server.registerTool(
+    'list_atex_files',
+    {
+      title: signedIn ? 'List my alphaTex scores' : 'List built-in alphaTex scores',
+      description: signedIn
+        ? "List the built-in example scores and the signed-in user's saved scores."
+        : 'List the built-in example scores. Use search_scores to find scores published by GuitarEasy users.',
+      inputSchema: z.object({}),
+      outputSchema: z.object({ files: z.array(scoreSummarySchema) }),
+      annotations: { readOnlyHint: true },
+    },
+    async () => {
+      try {
+        const id = await viewerId()
+        const own = id ? await listOwnScores(env, id) : []
+        const files = [...seedScores.map(seedSummary), ...own.map(toToolSummary)]
+        return {
+          content: [{ type: 'text', text: files.map(describeScore).join('\n') }],
+          structuredContent: { files },
+        }
+      } catch (error) {
+        return toolError(error)
+      }
+    },
+  )
+
+  server.registerTool(
+    'search_scores',
+    {
+      title: 'Search scores',
+      description: signedIn
+        ? "Search built-in scores, the user's own scores, and scores published by other users by file name, song title, artist, or uploader."
+        : 'Search built-in scores and scores published by GuitarEasy users by file name, song title, artist, or uploader.',
+      inputSchema: z.object({ query: z.string().max(200).describe('Words to match, e.g. "romance" or "Djawadi".') }),
+      outputSchema: z.object({ query: z.string(), scores: z.array(scoreSummarySchema) }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ query }) => {
+      try {
+        const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
+        const seeds = seedScores
+          .map(seedSummary)
+          .filter((seed) => terms.every((term) => `${seed.name} ${seed.title} ${seed.artist}`.toLowerCase().includes(term)))
+        const found = await searchScores(env, query, await viewerId())
+        const scores = [...seeds, ...found.map(toToolSummary)]
+        return {
+          content: [{ type: 'text', text: scores.length ? scores.map(describeScore).join('\n') : `No scores match "${query}".` }],
+          structuredContent: { query, scores },
+        }
+      } catch (error) {
+        return toolError(error)
+      }
+    },
+  )
+
+  server.registerTool(
+    'get_score_details',
+    {
+      title: 'Get score ratings and comments',
+      description: 'Show the publish status, star rating, and comments of a score.',
+      inputSchema: z.object({ id: scoreIdSchema }),
+      outputSchema: z.object({ score: scoreSummarySchema, comments: z.array(commentSchema), viewer: viewerSchema.nullable() }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ id }) => {
+      try {
+        const user = await viewer()
+        const resolved = await resolveScore(env, id, user?.id ?? null)
+        if (!resolved.summary) throw new HttpError(404, 'score_not_found', 'That score has no details to show.')
+        const comments: Comment[] = resolved.summary.builtIn ? [] : await listComments(env, id, user?.id ?? null)
+        const lines = [describeScore(resolved.summary), ...comments.map((comment) => `${comment.author.displayName}: ${comment.body}`)]
+        return {
+          content: [{ type: 'text', text: lines.join('\n') }],
+          structuredContent: { score: resolved.summary, comments, viewer: user },
+        }
+      } catch (error) {
+        return toolError(error)
+      }
+    },
+  )
+
+  registerAppTool(
+    server,
+    'play_atex',
+    {
+      title: 'Play alphaTex score',
+      description:
+        signedIn
+          ? 'Open a saved, built-in, published, or inline alphaTex score in the interactive GuitarEasy player, where the user can play it, save it, publish it, rate it, comment on it, and search for other scores.'
+          : 'Open a built-in, published, or inline alphaTex score in the interactive GuitarEasy player, where the user can play it, read its ratings and comments, and search for other scores.',
+      inputSchema: z.object({
+        id: scoreIdSchema.optional().describe(signedIn ? 'id of a saved, built-in, or published score.' : 'id of a built-in or published score.'),
+        tex: z.string().min(1).max(MAX_SCORE_BYTES).optional().describe('Inline alphaTex source, used when no id is given.'),
+        name: z.string().min(1).optional().describe('Display name when passing inline tex.'),
+        theme: themePreferenceSchema
+          .optional()
+          .default('system')
+          .describe('Widget color theme: dark, light, or system. Use dark to force dark mode.'),
+      }),
+      outputSchema: z.object({
+        id: z.string().nullable(),
+        name: z.string(),
+        tex: z.string(),
+        playbackUrl: z.string().url(),
+        theme: themePreferenceSchema,
+        score: scoreSummarySchema.nullable(),
+        comments: z.array(commentSchema),
+        viewer: viewerSchema.nullable(),
+      }),
+      _meta: {
+        ui: { resourceUri: PLAYER_RESOURCE_URI },
+        'openai/outputTemplate': PLAYER_RESOURCE_URI,
+      },
+    },
+    async ({ id, tex, name, theme }) => {
+      try {
+        const user = await viewer()
+        let resolved: ResolvedScore
+        if (id) resolved = await resolveScore(env, id, user?.id ?? null)
+        else if (tex) resolved = { name: name ?? 'Untitled.atex', tex, summary: null }
+        else return toolError(new HttpError(400, 'missing_score', 'Provide either an "id" or inline "tex".'))
+
+        const comments =
+          resolved.summary && !resolved.summary.builtIn ? await listComments(env, resolved.summary.id, user?.id ?? null) : []
+
+        // ChatGPT does not currently delegate the `autoplay` permission to
+        // plugin iframes. Give the widget an opaque, short-lived URL that it
+        // can ask the host to open as a first-party page for audio.
+        const playbackToken = crypto.randomUUID()
+        await env.SCORES_KV.put(
+          `${PLAYER_SESSION_KEY_PREFIX}${playbackToken}`,
+          JSON.stringify({ name: resolved.name, tex: resolved.tex }),
+          { expirationTtl: PLAYER_SESSION_TTL_SECONDS },
+        )
+        const origin = request ? new URL(request.url).origin : PLAYER_ASSET_ORIGIN
+        const playbackUrl = `${origin}/mcp-app/?session=${encodeURIComponent(playbackToken)}`
+
+        return {
+          content: [{ type: 'text', text: `Opened "${resolved.name}" in the player.` }],
+          structuredContent: {
+            id: resolved.summary?.id ?? (id || null),
+            name: resolved.name,
+            tex: resolved.tex,
+            playbackUrl,
+            theme,
+            score: resolved.summary,
+            comments,
+            viewer: user,
+          },
+        }
+      } catch (error) {
+        return toolError(error)
+      }
+    },
+  )
+
+  for (const resourceUri of [PLAYER_RESOURCE_URI, ...LEGACY_PLAYER_RESOURCE_URIS]) {
+    registerAppResource(
+      server,
+      'GuitarEasy player',
+      resourceUri,
+      {
+        mimeType: RESOURCE_MIME_TYPE,
+        _meta: playerResourceMeta(PLAYER_ASSET_ORIGIN),
+      },
+      async () => {
+        const origin = request ? new URL(request.url).origin : undefined
+        const assetUrl = new URL('/mcp-app/index.html', origin ?? 'https://player.internal/')
+        const assetResponse = await env.ASSETS.fetch(new Request(assetUrl))
+        let html = await assetResponse.text()
+        const assetOrigin = origin ?? PLAYER_ASSET_ORIGIN
+        // ChatGPT renders the resource on a sandbox origin. Make every
+        // external asset URL explicit instead of relying on <base>, which is
+        // not part of ChatGPT's documented widget CSP contract.
+        html = html
+          .replaceAll('src="/mcp-app/', `src="${assetOrigin}/mcp-app/`)
+          .replaceAll('href="/mcp-app/', `href="${assetOrigin}/mcp-app/`)
+        return {
+          contents: [
+            {
+              uri: resourceUri,
+              mimeType: RESOURCE_MIME_TYPE,
+              text: html,
+              _meta: playerResourceMeta(assetOrigin),
+            },
+          ],
+        }
+      },
+    )
+  }
+
+  // Everything below needs a signed-in account.
+  if (!userId) return server
 
   server.registerTool(
     'get_current_user',
@@ -199,7 +427,8 @@ export function createServer(env: Env, request: Request | undefined, userId: str
     },
     async () => {
       try {
-        const user = await viewer()
+        const { id, displayName, email } = await currentUser()
+        const user = { id, displayName, email }
         return {
           content: [{ type: 'text', text: `Signed in as ${user.displayName} (${user.email}).` }],
           structuredContent: { user },
@@ -281,79 +510,6 @@ export function createServer(env: Env, request: Request | undefined, userId: str
   )
 
   server.registerTool(
-    'download_atex',
-    {
-      title: 'Download alphaTex file',
-      description: "Retrieve the alphaTex source of a built-in score, one of the user's scores, or a published score.",
-      inputSchema: z.object({ id: scoreIdSchema }),
-      outputSchema: z.object({ id: z.string(), name: z.string(), tex: z.string() }),
-      annotations: { readOnlyHint: true },
-    },
-    async ({ id }) => {
-      try {
-        const score = await resolveScore(env, id, (await currentUser()).id)
-        return {
-          content: [{ type: 'text', text: score.tex }],
-          structuredContent: { id, name: score.name, tex: score.tex },
-        }
-      } catch (error) {
-        return toolError(error)
-      }
-    },
-  )
-
-  server.registerTool(
-    'list_atex_files',
-    {
-      title: 'List my alphaTex scores',
-      description: "List the built-in example scores and the signed-in user's saved scores.",
-      inputSchema: z.object({}),
-      outputSchema: z.object({ files: z.array(scoreSummarySchema) }),
-      annotations: { readOnlyHint: true },
-    },
-    async () => {
-      try {
-        const own = await listOwnScores(env, (await currentUser()).id)
-        const files = [...seedScores.map(seedSummary), ...own.map(toToolSummary)]
-        return {
-          content: [{ type: 'text', text: files.map(describeScore).join('\n') }],
-          structuredContent: { files },
-        }
-      } catch (error) {
-        return toolError(error)
-      }
-    },
-  )
-
-  server.registerTool(
-    'search_scores',
-    {
-      title: 'Search scores',
-      description:
-        "Search built-in scores, the user's own scores, and scores published by other users by file name, song title, artist, or uploader.",
-      inputSchema: z.object({ query: z.string().max(200).describe('Words to match, e.g. "romance" or "Djawadi".') }),
-      outputSchema: z.object({ query: z.string(), scores: z.array(scoreSummarySchema) }),
-      annotations: { readOnlyHint: true },
-    },
-    async ({ query }) => {
-      try {
-        const terms = query.toLowerCase().split(/\s+/).filter(Boolean)
-        const seeds = seedScores
-          .map(seedSummary)
-          .filter((seed) => terms.every((term) => `${seed.name} ${seed.title} ${seed.artist}`.toLowerCase().includes(term)))
-        const found = await searchScores(env, query, (await currentUser()).id)
-        const scores = [...seeds, ...found.map(toToolSummary)]
-        return {
-          content: [{ type: 'text', text: scores.length ? scores.map(describeScore).join('\n') : `No scores match "${query}".` }],
-          structuredContent: { query, scores },
-        }
-      } catch (error) {
-        return toolError(error)
-      }
-    },
-  )
-
-  server.registerTool(
     'publish_score',
     {
       title: 'Publish or unpublish a score',
@@ -397,32 +553,6 @@ export function createServer(env: Env, request: Request | undefined, userId: str
   )
 
   server.registerTool(
-    'get_score_details',
-    {
-      title: 'Get score ratings and comments',
-      description: 'Show the publish status, star rating, and comments of a score.',
-      inputSchema: z.object({ id: scoreIdSchema }),
-      outputSchema: z.object({ score: scoreSummarySchema, comments: z.array(commentSchema), viewer: viewerSchema }),
-      annotations: { readOnlyHint: true },
-    },
-    async ({ id }) => {
-      try {
-        const user = await viewer()
-        const resolved = await resolveScore(env, id, user.id)
-        if (!resolved.summary) throw new HttpError(404, 'score_not_found', 'That score has no details to show.')
-        const comments: Comment[] = resolved.summary.builtIn ? [] : await listComments(env, id, user.id)
-        const lines = [describeScore(resolved.summary), ...comments.map((comment) => `${comment.author.displayName}: ${comment.body}`)]
-        return {
-          content: [{ type: 'text', text: lines.join('\n') }],
-          structuredContent: { score: resolved.summary, comments, viewer: user },
-        }
-      } catch (error) {
-        return toolError(error)
-      }
-    },
-  )
-
-  server.registerTool(
     'add_comment',
     {
       title: 'Comment on a published score',
@@ -458,114 +588,6 @@ export function createServer(env: Env, request: Request | undefined, userId: str
       }
     },
   )
-
-  registerAppTool(
-    server,
-    'play_atex',
-    {
-      title: 'Play alphaTex score',
-      description:
-        'Open a saved, built-in, published, or inline alphaTex score in the interactive GuitarEasy player, where the user can play it, save it, publish it, rate it, comment on it, and search for other scores.',
-      inputSchema: z.object({
-        id: scoreIdSchema.optional().describe('id of a saved, built-in, or published score.'),
-        tex: z.string().min(1).optional().describe('Inline alphaTex source, used when no id is given.'),
-        name: z.string().min(1).optional().describe('Display name when passing inline tex.'),
-        theme: themePreferenceSchema
-          .optional()
-          .default('system')
-          .describe('Widget color theme: dark, light, or system. Use dark to force dark mode.'),
-      }),
-      outputSchema: z.object({
-        id: z.string().nullable(),
-        name: z.string(),
-        tex: z.string(),
-        playbackUrl: z.string().url(),
-        theme: themePreferenceSchema,
-        score: scoreSummarySchema.nullable(),
-        comments: z.array(commentSchema),
-        viewer: viewerSchema,
-      }),
-      _meta: {
-        ui: { resourceUri: PLAYER_RESOURCE_URI },
-        'openai/outputTemplate': PLAYER_RESOURCE_URI,
-      },
-    },
-    async ({ id, tex, name, theme }) => {
-      try {
-        const user = await viewer()
-        let resolved: ResolvedScore
-        if (id) resolved = await resolveScore(env, id, user.id)
-        else if (tex) resolved = { name: name ?? 'Untitled.atex', tex, summary: null }
-        else return toolError(new HttpError(400, 'missing_score', 'Provide either an "id" or inline "tex".'))
-
-        const comments =
-          resolved.summary && !resolved.summary.builtIn ? await listComments(env, resolved.summary.id, user.id) : []
-
-        // ChatGPT does not currently delegate the `autoplay` permission to
-        // plugin iframes. Give the widget an opaque, short-lived URL that it
-        // can ask the host to open as a first-party page for audio.
-        const playbackToken = crypto.randomUUID()
-        await env.SCORES_KV.put(
-          `${PLAYER_SESSION_KEY_PREFIX}${playbackToken}`,
-          JSON.stringify({ name: resolved.name, tex: resolved.tex }),
-          { expirationTtl: PLAYER_SESSION_TTL_SECONDS },
-        )
-        const origin = request ? new URL(request.url).origin : PLAYER_ASSET_ORIGIN
-        const playbackUrl = `${origin}/mcp-app/?session=${encodeURIComponent(playbackToken)}`
-
-        return {
-          content: [{ type: 'text', text: `Opened "${resolved.name}" in the player.` }],
-          structuredContent: {
-            id: resolved.summary?.id ?? (id || null),
-            name: resolved.name,
-            tex: resolved.tex,
-            playbackUrl,
-            theme,
-            score: resolved.summary,
-            comments,
-            viewer: user,
-          },
-        }
-      } catch (error) {
-        return toolError(error)
-      }
-    },
-  )
-
-  for (const resourceUri of [PLAYER_RESOURCE_URI, ...LEGACY_PLAYER_RESOURCE_URIS]) {
-    registerAppResource(
-      server,
-      'GuitarEasy player',
-      resourceUri,
-      {
-        mimeType: RESOURCE_MIME_TYPE,
-        _meta: playerResourceMeta(PLAYER_ASSET_ORIGIN),
-      },
-      async () => {
-        const origin = request ? new URL(request.url).origin : undefined
-        const assetUrl = new URL('/mcp-app/index.html', origin ?? 'https://player.internal/')
-        const assetResponse = await env.ASSETS.fetch(new Request(assetUrl))
-        let html = await assetResponse.text()
-        const assetOrigin = origin ?? PLAYER_ASSET_ORIGIN
-        // ChatGPT renders the resource on a sandbox origin. Make every
-        // external asset URL explicit instead of relying on <base>, which is
-        // not part of ChatGPT's documented widget CSP contract.
-        html = html
-          .replaceAll('src="/mcp-app/', `src="${assetOrigin}/mcp-app/`)
-          .replaceAll('href="/mcp-app/', `href="${assetOrigin}/mcp-app/`)
-        return {
-          contents: [
-            {
-              uri: resourceUri,
-              mimeType: RESOURCE_MIME_TYPE,
-              text: html,
-              _meta: playerResourceMeta(assetOrigin),
-            },
-          ],
-        }
-      },
-    )
-  }
 
   return server
 }

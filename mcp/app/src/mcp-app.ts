@@ -15,6 +15,8 @@ const PLAYER_READY_MESSAGE = 'guitareasy:player-ready'
 const LOAD_SCORE_MESSAGE = 'guitareasy:load-score'
 const HOST_CONTEXT_MESSAGE = 'guitareasy:host-context'
 const OPEN_AUDIO_PLAYER_MESSAGE = 'guitareasy:open-audio-player'
+// Shown on the public endpoint, whose tool results carry no viewer.
+const SIGN_IN_HINT = 'Connect to https://guitareasy.app/mcp and sign in to save, rate, and comment.'
 
 type ScoreRenderPalette = {
   staffLineColor: string
@@ -115,7 +117,7 @@ function extractScore(result: CallToolResult): OpenedScore | undefined {
         theme?: unknown
         score?: ScoreSummary | null
         comments?: Comment[]
-        viewer?: Viewer
+        viewer?: Viewer | null
       }
     | undefined
   if (!data?.tex) return undefined
@@ -324,8 +326,12 @@ function startSandboxBridge() {
     parts.push(`<div class="community-title"><strong>${heading}</strong></div>`)
 
     if (!score) {
-      parts.push('<p class="community-hint">This score is not in your library yet.</p>')
-      parts.push('<button type="button" class="widget-button is-primary" data-action="save">Save to my library</button>')
+      if (viewer) {
+        parts.push('<p class="community-hint">This score is not in your library yet.</p>')
+        parts.push('<button type="button" class="widget-button is-primary" data-action="save">Save to my library</button>')
+      } else {
+        parts.push(`<p class="community-hint">${SIGN_IN_HINT}</p>`)
+      }
     } else if (score.builtIn) {
       parts.push('<p class="community-hint">Built-in example scores are not rated or discussed.</p>')
     } else {
@@ -343,7 +349,7 @@ function startSandboxBridge() {
           ? `${score.rating.average?.toFixed(1)} out of 5 · ${score.rating.count} rating${score.rating.count === 1 ? '' : 's'}`
           : 'No ratings yet'
         parts.push(`<p class="rating-summary"><span class="stars" aria-hidden="true">${starText(score.rating.average)}</span> ${summary}</p>`)
-        if (!score.isOwner) {
+        if (viewer && !score.isOwner) {
           const buttons = [1, 2, 3, 4, 5]
             .map((value) => `<button type="button" class="star-button ${(score.rating.mine ?? 0) >= value ? 'is-filled' : ''}" data-action="rate" data-stars="${value}" aria-label="Rate ${value} out of 5" aria-pressed="${score.rating.mine === value}">★</button>`)
             .join('')
@@ -355,7 +361,8 @@ function startSandboxBridge() {
           }</div><p>${escapeHtml(comment.body)}</p></li>`)
           .join('')
         parts.push(`<h3>Comments (${opened.comments.length})</h3><ol class="comment-list">${comments || '<li class="comment-empty">No comments yet.</li>'}</ol>`)
-        parts.push('<form class="comment-form" data-action="comment"><textarea rows="2" maxlength="2000" required placeholder="Share a tip or say thanks…" aria-label="Add a comment"></textarea><button type="submit" class="widget-button is-primary">Post</button></form>')
+        if (!viewer) parts.push(`<p class="community-hint">${SIGN_IN_HINT}</p>`)
+        else parts.push('<form class="comment-form" data-action="comment"><textarea rows="2" maxlength="2000" required placeholder="Share a tip or say thanks…" aria-label="Add a comment"></textarea><button type="submit" class="widget-button is-primary">Post</button></form>')
       }
     }
     if (communityError) parts.push(`<p class="widget-error" role="alert">${escapeHtml(communityError)}</p>`)
@@ -376,7 +383,7 @@ function startSandboxBridge() {
 
   async function refreshDetails() {
     if (!opened?.score) return
-    const details = await callTool<{ score: ScoreSummary; comments: Comment[]; viewer: Viewer }>('get_score_details', { id: opened.score.id })
+    const details = await callTool<{ score: ScoreSummary; comments: Comment[]; viewer: Viewer | null }>('get_score_details', { id: opened.score.id })
     opened = { ...opened, score: details.score, comments: details.comments }
     viewer = details.viewer
   }

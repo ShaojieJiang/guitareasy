@@ -167,6 +167,8 @@ export async function startEmailChallenge(env: Env, request: Request, emailInput
     delivery = await sendSignInCode(env, email, code)
   } catch (error) {
     console.error('Sign-in email delivery failed', error)
+    // An undelivered code must not count toward the rate limit.
+    await env.DB.prepare('DELETE FROM auth_challenges WHERE id = ?').bind(challengeId).run()
     throw new HttpError(502, 'email_failed', 'The sign-in email could not be sent. Try again later.')
   }
   // The response is identical for new and existing addresses, so it cannot
