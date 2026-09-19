@@ -95,8 +95,10 @@ superseded is retired.) A public App Store listing is a separate, much larger pa
 OpenAI review, branding assets, and a privacy policy — not set up here. Developer mode
 availability can depend on account/workspace policy. After deploying a tool descriptor or UI
 resource change, open **Settings → Plugins → GuitarEasy → Manage → Refresh** before testing in a
-new chat. ChatGPT snapshots the template used by an existing response, so old widget cards do not
-adopt a newer resource URI or bundle after deployment.
+new chat. ChatGPT snapshots the widget template (and its CSP) per resource URI. The URI is derived
+from the built bundle and resource metadata, so it changes on its own when either does; older URIs
+still resolve. Cached templates keep loading their old entry bundle, which the worker's
+`sync-player-assets` step rewrites into a loader for the current build.
 
 **Claude Code** — connects and can call the tools, but per the caveat above won't render the
 player inline; only the tools' fallback text.

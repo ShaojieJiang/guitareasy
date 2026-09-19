@@ -4,3 +4,4 @@ dist
 src/seed
 public
 .env
+src/player-version.ts

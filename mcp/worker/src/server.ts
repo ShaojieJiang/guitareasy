@@ -1,4 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/server'
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server'
 import { registerAppTool, registerAppResource, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server'
 import { z } from 'zod'
 import { getUser, type User } from './auth'
@@ -20,33 +20,12 @@ import {
   type Comment,
   type ScoreSummary,
 } from './scores'
+import { PLAYER_BUNDLE_HASH } from './player-version'
 import { seedScores } from './seed-scores'
 import { HttpError } from './util'
 
 export type { Env }
 
-// Resource URIs are cache keys in MCP Apps hosts. Bump this when the HTML,
-// bundle, or security policy changes so hosts do not keep an older broken
-// widget after a deployment.
-const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v15.html'
-// Keep older cache keys readable for ChatGPT connections that have not
-// refreshed their tool descriptor since a previous UI deployment.
-const LEGACY_PLAYER_RESOURCE_URIS = [
-  'ui://guitareasy/player/v14.html',
-  'ui://guitareasy/player/v13.html',
-  'ui://guitareasy/player/v12.html',
-  'ui://guitareasy/player/v11.html',
-  'ui://guitareasy/player/v10.html',
-  'ui://guitareasy/player/v9.html',
-  'ui://guitareasy/player/v8.html',
-  'ui://guitareasy/player/v7.html',
-  'ui://guitareasy/player/v6.html',
-  'ui://guitareasy/player/v5.html',
-  'ui://guitareasy/player/v4.html',
-  'ui://guitareasy/player/v3.html',
-  'ui://guitareasy/player/v2.html',
-  'ui://guitareasy/player',
-] as const
 const PLAYER_ASSET_ORIGIN = 'https://guitareasy.app'
 export const PLAYER_SESSION_KEY_PREFIX = 'player-session:'
 const PLAYER_SESSION_TTL_SECONDS = 24 * 60 * 60
@@ -74,6 +53,27 @@ function playerResourceMeta(assetOrigin: string) {
     },
   }
 }
+
+// FNV-1a, enough to fingerprint the resource metadata synchronously.
+function shortHash(text: string) {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 0x01000193)
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
+
+// Resource URIs are cache keys in MCP Apps hosts: ChatGPT keeps the widget
+// HTML and CSP it read for a URI. Deriving the URI from the built bundle and
+// the resource metadata makes it change exactly when either does, so hosts
+// pick up a new widget without anyone bumping a version by hand.
+const PLAYER_RESOURCE_URI = `ui://guitareasy/player/${PLAYER_BUNDLE_HASH}-${shortHash(
+  JSON.stringify(playerResourceMeta(PLAYER_ASSET_ORIGIN)),
+)}.html`
+// Connections that have not refreshed their tool descriptor since an earlier
+// deployment still ask for an older URI (ui://guitareasy/player/v14.html or
+// an earlier hash). Serve them the current widget too; the unversioned URI
+// predates versioning and needs its own registration.
+const PREVIOUS_PLAYER_RESOURCE_TEMPLATE = 'ui://guitareasy/player/{version}'
+const UNVERSIONED_PLAYER_RESOURCE_URI = 'ui://guitareasy/player'
 
 const themePreferenceSchema = z.enum(['light', 'dark', 'system'])
 const scoreIdSchema = z.string().min(1).max(100)
@@ -380,40 +380,38 @@ export function createServer(env: Env, request: Request | undefined, userId: str
     },
   )
 
-  for (const resourceUri of [PLAYER_RESOURCE_URI, ...LEGACY_PLAYER_RESOURCE_URIS]) {
-    registerAppResource(
-      server,
-      'GuitarEasy player',
-      resourceUri,
-      {
-        mimeType: RESOURCE_MIME_TYPE,
-        _meta: playerResourceMeta(PLAYER_ASSET_ORIGIN),
-      },
-      async () => {
-        const origin = request ? new URL(request.url).origin : undefined
-        const assetUrl = new URL('/mcp-app/index.html', origin ?? 'https://player.internal/')
-        const assetResponse = await env.ASSETS.fetch(new Request(assetUrl))
-        let html = await assetResponse.text()
-        const assetOrigin = origin ?? PLAYER_ASSET_ORIGIN
-        // ChatGPT renders the resource on a sandbox origin. Make every
-        // external asset URL explicit instead of relying on <base>, which is
-        // not part of ChatGPT's documented widget CSP contract.
-        html = html
-          .replaceAll('src="/mcp-app/', `src="${assetOrigin}/mcp-app/`)
-          .replaceAll('href="/mcp-app/', `href="${assetOrigin}/mcp-app/`)
-        return {
-          contents: [
-            {
-              uri: resourceUri,
-              mimeType: RESOURCE_MIME_TYPE,
-              text: html,
-              _meta: playerResourceMeta(assetOrigin),
-            },
-          ],
-        }
-      },
-    )
+  const readPlayer = async (uri: URL) => {
+    const origin = request ? new URL(request.url).origin : undefined
+    const assetUrl = new URL('/mcp-app/index.html', origin ?? 'https://player.internal/')
+    const assetResponse = await env.ASSETS.fetch(new Request(assetUrl))
+    let html = await assetResponse.text()
+    const assetOrigin = origin ?? PLAYER_ASSET_ORIGIN
+    // ChatGPT renders the resource on a sandbox origin. Make every
+    // external asset URL explicit instead of relying on <base>, which is
+    // not part of ChatGPT's documented widget CSP contract.
+    html = html
+      .replaceAll('src="/mcp-app/', `src="${assetOrigin}/mcp-app/`)
+      .replaceAll('href="/mcp-app/', `href="${assetOrigin}/mcp-app/`)
+    return {
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: RESOURCE_MIME_TYPE,
+          text: html,
+          _meta: playerResourceMeta(assetOrigin),
+        },
+      ],
+    }
   }
+  const playerResourceConfig = { mimeType: RESOURCE_MIME_TYPE, _meta: playerResourceMeta(PLAYER_ASSET_ORIGIN) }
+  registerAppResource(server, 'GuitarEasy player', PLAYER_RESOURCE_URI, playerResourceConfig, readPlayer)
+  registerAppResource(server, 'GuitarEasy player (unversioned)', UNVERSIONED_PLAYER_RESOURCE_URI, playerResourceConfig, readPlayer)
+  server.registerResource(
+    'GuitarEasy player (previous versions)',
+    new ResourceTemplate(PREVIOUS_PLAYER_RESOURCE_TEMPLATE, { list: undefined }),
+    playerResourceConfig,
+    readPlayer,
+  )
 
   // Everything below needs a signed-in account.
   if (!userId) return server
