@@ -326,17 +326,8 @@ app.innerHTML = `
       <section class="studio-grid">
         <aside class="control-panel" id="control-panel" aria-label="${t('sourceFile')}">
           <div class="panel-heading">
-            <div>
-              <p class="section-kicker" data-i18n="sourceFile">${t('sourceFile')}</p>
-              <h2 data-i18n="bringScore">${t('bringScore')}</h2>
-            </div>
-            <div class="panel-heading-side">
-              <div class="tip-block">
-                <span class="tip-icon">i</span>
-                <p data-i18n="privacyNote">${t('privacyNote')}</p>
-              </div>
-              <span class="file-type">.ATEX</span>
-            </div>
+            <p class="section-kicker" data-i18n="sourceFile">${t('sourceFile')}</p>
+            <p class="tip-note" data-i18n="privacyNote">${t('privacyNote')}</p>
           </div>
 
           <div class="upload-card" id="drop-zone">
@@ -378,7 +369,6 @@ app.innerHTML = `
         <section class="score-panel" aria-labelledby="score-heading">
           <div class="score-toolbar">
             <div>
-              <p class="section-kicker" data-i18n="notationPreview">${t('notationPreview')}</p>
               <h2 id="score-heading" class="sr-only" data-i18n="yourScore">${t('yourScore')}</h2>
               <button class="sidebar-toggle" id="sidebar-toggle" type="button" aria-controls="control-panel" aria-expanded="true">
                 <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
@@ -1421,6 +1411,7 @@ api = new alphaTab.AlphaTabApi(notationCanvas, {
   display: {
     layoutMode: alphaTab.LayoutMode.Page,
     scale: 0.9,
+    padding: [35, 0, 35, 35],
     staveProfile: alphaTab.StaveProfile.Tab,
     resources: getNotationPalette(getResolvedTheme()),
   },
