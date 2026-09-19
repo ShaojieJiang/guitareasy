@@ -40,7 +40,7 @@ UI resource).
 | `upload_atex(name, tex)` | Store a score (256 KB cap, no auth). Returns `{ id, name }`. |
 | `download_atex(id)` | Retrieve a stored score's alphaTex source by id. |
 | `list_atex_files()` | List bundled + uploaded scores (id, name, size, uploaded date). |
-| `play_atex({ id } \| { tex, name })` | Open a stored or inline score in the interactive player. |
+| `play_atex({ id } \| { tex, name }, theme?)` | Open a stored or inline score in the interactive player. `theme` can be `dark`, `light`, or `system`; use `dark` to force dark mode. |
 
 The server is seeded on first use with the same three bundled scores as the main app (*Canon in
 D*, *Game of Thrones Theme*, *Spanish Romance*), so `list_atex_files`/`play_atex` work without any

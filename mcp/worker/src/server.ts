@@ -11,10 +11,11 @@ export interface Env {
 // Resource URIs are cache keys in MCP Apps hosts. Bump this when the HTML,
 // bundle, or security policy changes so hosts do not keep an older broken
 // widget after a deployment.
-const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v11.html'
+const PLAYER_RESOURCE_URI = 'ui://guitareasy/player/v12.html'
 // Keep older cache keys readable for ChatGPT connections that have not
 // refreshed their tool descriptor since a previous UI deployment.
 const LEGACY_PLAYER_RESOURCE_URIS = [
+  'ui://guitareasy/player/v11.html',
   'ui://guitareasy/player/v10.html',
   'ui://guitareasy/player/v9.html',
   'ui://guitareasy/player/v8.html',
@@ -60,6 +61,7 @@ function playerResourceMeta(assetOrigin: string) {
 
 type FileMeta = { id: string; name: string; size: number; uploadedAt: string }
 type FileRecord = FileMeta & { tex: string }
+const themePreferenceSchema = z.enum(['light', 'dark', 'system'])
 
 async function readIndex(env: Env): Promise<FileMeta[]> {
   const raw = await env.SCORES_KV.get(INDEX_KEY)
@@ -203,14 +205,23 @@ export function createServer(env: Env, request?: Request): McpServer {
         id: z.string().min(1).optional().describe('id of a previously uploaded or bundled file.'),
         tex: z.string().min(1).optional().describe('Inline alphaTex source, used when no id is given.'),
         name: z.string().min(1).optional().describe('Display name when passing inline tex.'),
+        theme: themePreferenceSchema
+          .optional()
+          .default('system')
+          .describe('Widget color theme: dark, light, or system. Use dark to force dark mode.'),
       }),
-      outputSchema: z.object({ name: z.string(), tex: z.string(), playbackUrl: z.string().url() }),
+      outputSchema: z.object({
+        name: z.string(),
+        tex: z.string(),
+        playbackUrl: z.string().url(),
+        theme: themePreferenceSchema,
+      }),
       _meta: {
         ui: { resourceUri: PLAYER_RESOURCE_URI },
         'openai/outputTemplate': PLAYER_RESOURCE_URI,
       },
     },
-    async ({ id, tex, name }) => {
+    async ({ id, tex, name, theme }) => {
       await ensureSeeded(env)
       let resolvedTex = tex
       let resolvedName = name ?? 'Untitled.atex'
@@ -242,7 +253,7 @@ export function createServer(env: Env, request?: Request): McpServer {
 
       return {
         content: [{ type: 'text', text: `Opened "${resolvedName}" in the player.` }],
-        structuredContent: { name: resolvedName, tex: resolvedTex, playbackUrl },
+        structuredContent: { name: resolvedName, tex: resolvedTex, playbackUrl, theme },
       }
     },
   )
