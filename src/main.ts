@@ -1,10 +1,20 @@
 import * as alphaTab from '@coderline/alphatab'
+import { api as cloudApi, ApiError, type Comment, type Providers, type ScoreSummary, type User } from './api'
+import { communityTranslations, englishCommunityMessages } from './community-messages'
 import './style.css'
+
+// bundled: shipped with the app. local: kept in this browser (visitors, or
+// uploads waiting to sync). cloud: the signed-in user's own D1 scores.
+// community: someone else's published score opened from search.
+type ScoreSource = 'bundled' | 'local' | 'cloud' | 'community'
 
 type ScoreRecord = {
   id: string
   name: string
-  tex: string
+  // Cloud and community scores load their notation on first open.
+  tex?: string
+  source: ScoreSource
+  summary?: ScoreSummary
 }
 
 const bundledScoreSources = import.meta.glob('./assets/scores/*.atex', {
@@ -22,6 +32,7 @@ const bundledScores: ScoreRecord[] = Object.entries(bundledScoreSources)
     id: `bundled:${path}`,
     name: getFileName(path),
     tex,
+    source: 'bundled' as const,
   }))
   .sort((left, right) => left.name.localeCompare(right.name))
 const defaultScore = bundledScores[0]!
@@ -38,20 +49,32 @@ function createScoreId() {
     : `score-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function restoreScoreLibrary() {
+function restoreScoreLibrary(): ScoreRecord[] {
   try {
     const saved = JSON.parse(localStorage.getItem(scoreLibraryStorageKey) ?? '[]')
     if (!Array.isArray(saved)) return []
-    return saved.filter((score): score is ScoreRecord => (
+    return saved.filter((score): score is { id: string; name: string; tex: string } => (
       typeof score?.id === 'string' && !bundledScoreIds.has(score.id) &&
       typeof score?.name === 'string' && typeof score?.tex === 'string' && score.tex.trim().length > 0
-    )).map((score) => ({ ...score, name: normalizeScoreName(score.name) }))
+    )).map((score) => ({ id: score.id, name: normalizeScoreName(score.name), tex: score.tex, source: 'local' as const }))
   } catch {
     return []
   }
 }
 
-const scoreLibrary: ScoreRecord[] = [...bundledScores, ...restoreScoreLibrary()]
+let scoreLibrary: ScoreRecord[] = [...bundledScores, ...restoreScoreLibrary()]
+
+// Mirrors the worker's readTexMetadata so local search matches titles and
+// artists the same way the server does.
+function readTexMetadata(tex: string, key: 'title' | 'artist') {
+  const pattern = new RegExp(`^[ \\t]*\\\\${key}[ \\t]*\\(?[ \\t]*(?:"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)'|([^\\s{(]+))`, 'im')
+  const match = pattern.exec(tex.replace(/\/\*[\s\S]*?\*\//g, ''))
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? '').trim()
+}
+
+function cloudRecord(summary: ScoreSummary, tex?: string): ScoreRecord {
+  return { id: summary.id, name: summary.name, tex, source: summary.isOwner ? 'cloud' : 'community', summary }
+}
 
 type ThemePreference = 'system' | 'light' | 'dark'
 
@@ -69,7 +92,7 @@ const localeOptions: Array<{ value: Locale; label: string }> = [
   { value: 'ko', label: '한국어' },
 ]
 
-const englishMessages = {
+const coreEnglishMessages = {
   brandName: 'GuitarEasy',
   appTitle: 'Guitar Practice Made Easy',
   appDescription: 'A streamlined alphaTex guitar tablature reader and MIDI player.',
@@ -130,9 +153,9 @@ const englishMessages = {
   footerMidi: 'browser MIDI synthesis',
 } as const
 
-type MessageKey = keyof typeof englishMessages
+type CoreMessageKey = keyof typeof coreEnglishMessages
 
-const translations: Record<Locale, Partial<Record<MessageKey, string>>> = {
+const coreTranslations: Record<Locale, Partial<Record<CoreMessageKey, string>>> = {
   en: {},
   nl: {
     brandName: 'GuitarEasy', appTitle: 'alphaTex-speler', appDescription: 'Een overzichtelijke alphaTex-lezer voor gitaartabulatuur met ingebouwde MIDI-speler.',
@@ -212,6 +235,14 @@ const translations: Record<Locale, Partial<Record<MessageKey, string>>> = {
   },
 }
 
+const englishMessages = { ...coreEnglishMessages, ...englishCommunityMessages }
+
+type MessageKey = keyof typeof englishMessages
+
+const translations = Object.fromEntries(
+  localeOptions.map(({ value }) => [value, { ...coreTranslations[value], ...communityTranslations[value] }]),
+) as Record<Locale, Partial<Record<MessageKey, string>>>
+
 const localeLanguageTags: Record<Locale, string> = {
   en: 'en', nl: 'nl', de: 'de', fr: 'fr', es: 'es', pt: 'pt-BR', zh: 'zh-CN', ja: 'ja', ko: 'ko',
 }
@@ -265,6 +296,7 @@ app.innerHTML = `
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .7a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.04c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.74.08-.74 1.2.09 1.84 1.23 1.84 1.23 1.07 1.83 2.8 1.3 3.48.99.11-.77.42-1.3.76-1.6-2.67-.3-5.47-1.34-5.47-5.95 0-1.31.47-2.38 1.23-3.22-.12-.3-.53-1.52.12-3.17 0 0 1-.32 3.3 1.23a11.5 11.5 0 0 1 6 0c2.29-1.55 3.29-1.23 3.29-1.23.65 1.65.24 2.87.12 3.17.77.84 1.23 1.91 1.23 3.22 0 4.62-2.81 5.64-5.49 5.94.43.37.81 1.1.81 2.22v3.29c0 .32.22.69.83.57A12 12 0 0 0 12 .7Z"/></svg>
           </a>
         </div>
+        <button class="account-button" id="account-button" type="button" data-i18n="signIn">${t('signIn')}</button>
         <label class="locale-picker">
           <span class="sr-only" data-i18n="language">${t('language')}</span>
           <select id="locale-select" aria-label="${t('language')}" title="${t('language')}">
@@ -319,14 +351,25 @@ app.innerHTML = `
             <p class="upload-formats" data-i18n="formats">${t('formats')}</p>
           </div>
 
+          <form class="score-search" id="score-search" role="search">
+            <label class="sr-only" for="search-input" data-i18n="searchScores">${t('searchScores')}</label>
+            <input id="search-input" type="search" enterkeyhint="search" autocomplete="off" maxlength="200" placeholder="${t('searchPlaceholder')}" />
+            <button class="search-button" id="search-button" type="submit" aria-label="${t('search')}" title="${t('search')}">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span data-i18n="search">${t('search')}</span>
+            </button>
+          </form>
+
           <div class="score-library" aria-label="${t('scoreLibrary')}">
             <div class="library-heading">
               <div>
-                <p class="section-kicker" data-i18n="scoreLibrary">${t('scoreLibrary')}</p>
+                <p class="section-kicker" id="library-kicker">${t('scoreLibrary')}</p>
                 <strong id="score-count"></strong>
               </div>
-              <span class="library-type" data-i18n="local">${t('local')}</span>
+              <span class="library-type" id="library-type">${t('local')}</span>
+              <button class="clear-search" id="clear-search" type="button" hidden data-i18n="clearSearch">${t('clearSearch')}</button>
             </div>
+            <p class="library-notice" id="library-notice" role="status" hidden></p>
             <div class="score-list" id="score-list"></div>
           </div>
 
@@ -371,8 +414,50 @@ app.innerHTML = `
         </section>
       </section>
 
+      <section class="community-panel" id="community-panel" aria-labelledby="community-title">
+        <div class="community-heading">
+          <div>
+            <p class="section-kicker" data-i18n="community">${t('community')}</p>
+            <h2 id="community-title" data-i18n="communityHeading">${t('communityHeading')}</h2>
+          </div>
+          <p class="community-score" id="community-score"></p>
+        </div>
+        <div class="community-body" id="community-body"></div>
+      </section>
+
       <footer class="footer-note"><span id="footer-brand">© ${t('brandName')}.app</span></footer>
     </main>
+
+    <dialog class="modal" id="auth-dialog" aria-labelledby="auth-title">
+      <form method="dialog" class="modal-close-form"><button class="modal-close" type="submit" aria-label="${t('close')}" title="${t('close')}">×</button></form>
+      <h2 id="auth-title" data-i18n="signInTitle">${t('signInTitle')}</h2>
+      <p class="modal-copy" data-i18n="signInIntro">${t('signInIntro')}</p>
+      <div class="auth-providers" id="auth-providers"></div>
+      <p class="auth-divider" id="auth-divider" data-i18n="orUseEmail">${t('orUseEmail')}</p>
+      <form class="auth-form" id="email-form">
+        <label><span data-i18n="emailLabel">${t('emailLabel')}</span><input id="auth-email" type="email" autocomplete="email" required maxlength="254" /></label>
+        <button class="primary-button" type="submit" data-i18n="sendCode">${t('sendCode')}</button>
+      </form>
+      <form class="auth-form" id="code-form" hidden>
+        <p class="modal-copy" id="code-hint"></p>
+        <label><span data-i18n="codeLabel">${t('codeLabel')}</span><input id="auth-code" inputmode="numeric" autocomplete="one-time-code" pattern="\\d{6}" maxlength="6" required /></label>
+        <button class="primary-button" type="submit" data-i18n="verifyCode">${t('verifyCode')}</button>
+        <button class="text-button" id="auth-restart" type="button" data-i18n="useDifferentEmail">${t('useDifferentEmail')}</button>
+      </form>
+      <p class="form-error" id="auth-error" role="alert"></p>
+    </dialog>
+
+    <dialog class="modal" id="account-dialog" aria-labelledby="account-title">
+      <form method="dialog" class="modal-close-form"><button class="modal-close" type="submit" aria-label="${t('close')}" title="${t('close')}">×</button></form>
+      <h2 id="account-title" data-i18n="account">${t('account')}</h2>
+      <p class="modal-copy" id="account-email"></p>
+      <form class="auth-form" id="display-name-form">
+        <label><span data-i18n="displayNameLabel">${t('displayNameLabel')}</span><input id="display-name" type="text" autocomplete="nickname" required maxlength="60" /></label>
+        <button class="primary-button" type="submit" data-i18n="saveDisplayName">${t('saveDisplayName')}</button>
+      </form>
+      <button class="secondary-button" id="sign-out" type="button" data-i18n="signOut">${t('signOut')}</button>
+      <p class="form-error" id="account-error" role="alert"></p>
+    </dialog>
   </div>
 `
 
@@ -398,10 +483,45 @@ const localeSelect = document.querySelector<HTMLSelectElement>('#locale-select')
 const sidebarToggle = document.querySelector<HTMLButtonElement>('#sidebar-toggle')!
 const studioGrid = document.querySelector<HTMLElement>('.studio-grid')!
 const footerBrand = document.querySelector<HTMLElement>('#footer-brand')!
+const accountButton = document.querySelector<HTMLButtonElement>('#account-button')!
+const searchForm = document.querySelector<HTMLFormElement>('#score-search')!
+const searchInput = document.querySelector<HTMLInputElement>('#search-input')!
+const searchButton = document.querySelector<HTMLButtonElement>('#search-button')!
+const clearSearchButton = document.querySelector<HTMLButtonElement>('#clear-search')!
+const libraryKicker = document.querySelector<HTMLElement>('#library-kicker')!
+const libraryType = document.querySelector<HTMLElement>('#library-type')!
+const libraryNotice = document.querySelector<HTMLElement>('#library-notice')!
+const communityScore = document.querySelector<HTMLElement>('#community-score')!
+const communityBody = document.querySelector<HTMLDivElement>('#community-body')!
+const authDialog = document.querySelector<HTMLDialogElement>('#auth-dialog')!
+const authProviders = document.querySelector<HTMLDivElement>('#auth-providers')!
+const authDivider = document.querySelector<HTMLElement>('#auth-divider')!
+const emailForm = document.querySelector<HTMLFormElement>('#email-form')!
+const codeForm = document.querySelector<HTMLFormElement>('#code-form')!
+const authEmail = document.querySelector<HTMLInputElement>('#auth-email')!
+const authCode = document.querySelector<HTMLInputElement>('#auth-code')!
+const codeHint = document.querySelector<HTMLElement>('#code-hint')!
+const authError = document.querySelector<HTMLElement>('#auth-error')!
+const accountDialog = document.querySelector<HTMLDialogElement>('#account-dialog')!
+const accountEmail = document.querySelector<HTMLElement>('#account-email')!
+const displayNameForm = document.querySelector<HTMLFormElement>('#display-name-form')!
+const displayNameInput = document.querySelector<HTMLInputElement>('#display-name')!
+const accountError = document.querySelector<HTMLElement>('#account-error')!
 
 let api: alphaTab.AlphaTabApi
 let loadedName = defaultScore.name
-let activeScoreId = defaultScore.id
+let activeScore: ScoreRecord = defaultScore
+let currentUser: User | null = null
+let authProvidersState: Providers = { oauth: [], email: true }
+// Set when the accounts API cannot be reached (e.g. the worker is not
+// running locally). The sign-in button stays visible and explains why.
+let authUnavailable = false
+let pendingChallenge: { id: string; email: string; debugCode?: string } | undefined
+// Search results replace the library list until the search is cleared.
+let searchState: { query: string; status: 'loading' | 'done'; results: ScoreRecord[] } | undefined
+// Comments for the active score, fetched when a shared score is opened.
+let activeComments: { scoreId: string; comments: Comment[] } | undefined
+let libraryNoticeKey: MessageKey | undefined
 let isPlayerReady = false
 let audioResumePending = false
 let audioRecoveryInProgress = false
@@ -454,9 +574,20 @@ function applyLocale(locale: Locale) {
   const errorMessageKey = scoreError.dataset.messageKey as MessageKey | undefined
   if (errorMessageKey && errorMessageKey in englishMessages) scoreError.textContent = t(errorMessageKey)
 
+  searchInput.placeholder = t('searchPlaceholder')
+  searchButton.setAttribute('aria-label', t('search'))
+  searchButton.title = t('search')
+  document.querySelectorAll<HTMLButtonElement>('.modal-close').forEach((button) => {
+    button.setAttribute('aria-label', t('close'))
+    button.title = t('close')
+  })
+  if (pendingChallenge) renderCodeHint()
+
   updatePlayButton(playPause.classList.contains('is-playing'))
   applySidebarState(studioGrid.classList.contains('is-sidebar-collapsed'))
+  renderAccount()
   renderScoreLibrary()
+  renderCommunity()
   localStorage.setItem('guitareasy-locale', locale)
 }
 
@@ -526,85 +657,571 @@ function applySidebarState(collapsed: boolean) {
 
 function persistScoreLibrary() {
   try {
-    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(scoreLibrary.filter((score) => !bundledScoreIds.has(score.id))))
+    const localScores = scoreLibrary
+      .filter((score) => score.source === 'local')
+      .map(({ id, name, tex }) => ({ id, name, tex }))
+    localStorage.setItem(scoreLibraryStorageKey, JSON.stringify(localScores))
   } catch {
     // A full or restricted browser store should not prevent score playback.
   }
 }
 
-function renderScoreLibrary() {
-  scoreList.replaceChildren()
-  const countKey = scoreLibrary.length === 1 ? 'scoreCount' : 'scoreCountPlural'
-  scoreCount.textContent = formatMessage(countKey, { count: scoreLibrary.length })
-
-  scoreLibrary.forEach((score) => {
-    const row = document.createElement('div')
-    row.className = 'score-list-row'
-
-    const selectButton = document.createElement('button')
-    selectButton.type = 'button'
-    selectButton.className = 'score-item'
-    selectButton.classList.toggle('is-selected', score.id === activeScoreId)
-    selectButton.setAttribute('aria-pressed', String(score.id === activeScoreId))
-    selectButton.title = formatMessage('loadScoreNamed', { name: score.name })
-
-    const badge = document.createElement('span')
-    badge.className = 'score-item-badge'
-    badge.textContent = 'ATEX'
-
-    const copy = document.createElement('span')
-    copy.className = 'score-item-copy'
-    const title = document.createElement('strong')
-    title.textContent = score.name
-    const meta = document.createElement('small')
-    meta.textContent = bundledScoreIds.has(score.id) ? t('builtInScore') : t('uploadedScore')
-    copy.append(title, meta)
-
-    const marker = document.createElement('span')
-    marker.className = 'score-item-marker'
-    marker.setAttribute('aria-hidden', 'true')
-    marker.textContent = score.id === activeScoreId ? '✓' : ''
-
-    selectButton.append(badge, copy, marker)
-    selectButton.addEventListener('click', () => loadScore(score.id))
-    row.append(selectButton)
-
-    if (!bundledScoreIds.has(score.id)) {
-      const removeButton = document.createElement('button')
-      removeButton.type = 'button'
-      removeButton.className = 'score-remove'
-      const removeLabel = formatMessage('removeScoreNamed', { name: score.name })
-      removeButton.setAttribute('aria-label', removeLabel)
-      removeButton.title = removeLabel
-      removeButton.textContent = '×'
-      removeButton.addEventListener('click', () => removeScore(score.id))
-      row.append(removeButton)
-    }
-
-    scoreList.append(row)
-  })
+function errorText(error: unknown) {
+  return error instanceof ApiError ? error.message : t('authFailed')
 }
 
-function addScore(name: string, tex: string) {
-  const score = { id: createScoreId(), name: normalizeScoreName(name), tex }
+function setLibraryNotice(key?: MessageKey) {
+  libraryNoticeKey = key
+  libraryNotice.hidden = !key
+  libraryNotice.textContent = key ? t(key) : ''
+}
+
+function formatRating(summary: ScoreSummary) {
+  if (!summary.rating.count || summary.rating.average === null) return t('noRatings')
+  return formatMessage('ratingSummary', { average: summary.rating.average.toFixed(1), count: summary.rating.count })
+}
+
+function describeScore(score: ScoreRecord) {
+  if (score.source === 'bundled') return t('builtInScore')
+  if (score.source === 'local') return t('uploadedScore')
+  const summary = score.summary!
+  const parts = [
+    summary.artist,
+    score.source === 'community'
+      ? formatMessage('byOwner', { name: summary.owner.displayName })
+      : summary.isPublished ? t('publishedScore') : t('privateScore'),
+  ]
+  if (summary.isPublished && summary.rating.count && summary.rating.average !== null) {
+    parts.push(`★ ${summary.rating.average.toFixed(1)}`)
+  }
+  return parts.filter(Boolean).join(' · ')
+}
+
+function createScoreRow(score: ScoreRecord) {
+  const row = document.createElement('div')
+  row.className = 'score-list-row'
+  const isActive = score.id === activeScore.id
+
+  const selectButton = document.createElement('button')
+  selectButton.type = 'button'
+  selectButton.className = 'score-item'
+  selectButton.classList.toggle('is-selected', isActive)
+  selectButton.setAttribute('aria-pressed', String(isActive))
+  selectButton.title = formatMessage('loadScoreNamed', { name: score.name })
+
+  const badge = document.createElement('span')
+  badge.className = 'score-item-badge'
+  badge.textContent = 'ATEX'
+
+  const copy = document.createElement('span')
+  copy.className = 'score-item-copy'
+  const title = document.createElement('strong')
+  title.textContent = score.name
+  const meta = document.createElement('small')
+  meta.textContent = describeScore(score)
+  copy.append(title, meta)
+
+  const marker = document.createElement('span')
+  marker.className = 'score-item-marker'
+  marker.setAttribute('aria-hidden', 'true')
+  marker.textContent = isActive ? '✓' : ''
+
+  selectButton.append(badge, copy, marker)
+  selectButton.addEventListener('click', () => void loadScore(score))
+  row.append(selectButton)
+
+  if (score.source === 'local' || score.source === 'cloud') {
+    const removeButton = document.createElement('button')
+    removeButton.type = 'button'
+    removeButton.className = 'score-remove'
+    const removeLabel = formatMessage('removeScoreNamed', { name: score.name })
+    removeButton.setAttribute('aria-label', removeLabel)
+    removeButton.title = removeLabel
+    removeButton.textContent = '×'
+    removeButton.addEventListener('click', () => void removeScore(score))
+    row.append(removeButton)
+  }
+  return row
+}
+
+function renderScoreLibrary() {
+  scoreList.replaceChildren()
+  clearSearchButton.hidden = !searchState
+  libraryType.hidden = Boolean(searchState)
+  libraryType.textContent = currentUser ? t('cloud') : t('local')
+
+  if (searchState) {
+    libraryKicker.textContent = formatMessage('searchResultsFor', { query: searchState.query })
+    if (searchState.status === 'loading') {
+      scoreCount.textContent = t('searching')
+      return
+    }
+    const countKey = searchState.results.length === 1 ? 'scoreCount' : 'scoreCountPlural'
+    scoreCount.textContent = formatMessage(countKey, { count: searchState.results.length })
+    if (!searchState.results.length) {
+      const empty = document.createElement('p')
+      empty.className = 'score-list-empty'
+      empty.textContent = formatMessage('noResults', { query: searchState.query })
+      scoreList.append(empty)
+    }
+    searchState.results.forEach((score) => scoreList.append(createScoreRow(score)))
+    return
+  }
+
+  libraryKicker.textContent = t('scoreLibrary')
+  const countKey = scoreLibrary.length === 1 ? 'scoreCount' : 'scoreCountPlural'
+  scoreCount.textContent = formatMessage(countKey, { count: scoreLibrary.length })
+  scoreLibrary.forEach((score) => scoreList.append(createScoreRow(score)))
+}
+
+function replaceInLibrary(record: ScoreRecord) {
+  scoreLibrary = scoreLibrary.map((score) => (score.id === record.id ? record : score))
+  if (searchState) {
+    searchState.results = searchState.results.map((score) => (score.id === record.id ? record : score))
+  }
+  if (activeScore.id === record.id) activeScore = record
+}
+
+async function addScore(name: string, tex: string): Promise<ScoreRecord> {
+  if (currentUser) {
+    try {
+      const saved = await cloudApi.createScore(normalizeScoreName(name), tex)
+      const record = cloudRecord(saved, saved.tex)
+      scoreLibrary.splice(bundledScores.length, 0, record)
+      renderScoreLibrary()
+      return record
+    } catch {
+      // Keep the upload in this browser; it is retried on the next sync.
+      setLibraryNotice('syncFailed')
+    }
+  }
+  const score: ScoreRecord = { id: createScoreId(), name: normalizeScoreName(name), tex, source: 'local' }
   scoreLibrary.splice(bundledScores.length, 0, score)
   persistScoreLibrary()
   renderScoreLibrary()
   return score
 }
 
-function removeScore(scoreId: string) {
-  const index = scoreLibrary.findIndex((score) => score.id === scoreId)
-  if (index < 0 || bundledScoreIds.has(scoreLibrary[index].id)) return
-  scoreLibrary.splice(index, 1)
+async function removeScore(score: ScoreRecord) {
+  if (score.source === 'cloud') {
+    if (!window.confirm(formatMessage('deleteScoreConfirm', { name: score.name }))) return
+    try {
+      await cloudApi.deleteScore(score.id)
+    } catch (error) {
+      showError(errorText(error))
+      return
+    }
+  } else if (score.source !== 'local') {
+    return
+  }
+  scoreLibrary = scoreLibrary.filter((item) => item.id !== score.id)
+  if (searchState) searchState.results = searchState.results.filter((item) => item.id !== score.id)
   persistScoreLibrary()
-  if (activeScoreId === scoreId) loadScore(defaultScore.id)
+  if (activeScore.id === score.id) void loadScore(defaultScore)
   else renderScoreLibrary()
 }
 
-function loadScore(scoreId: string) {
-  const score = scoreLibrary.find((item) => item.id === scoreId)
-  if (score) loadTex(score.tex, score.name, score.id)
+async function loadScore(score: ScoreRecord) {
+  let record = score
+  if (record.tex === undefined) {
+    try {
+      const full = await cloudApi.getScore(record.id)
+      record = cloudRecord(full, full.tex)
+      replaceInLibrary(record)
+    } catch (error) {
+      showError(errorText(error))
+      return
+    }
+  }
+  activeScore = record
+  activeComments = undefined
+  loadTex(record.tex!, record.name)
+  renderCommunity()
+  if (record.summary?.isPublished) void refreshComments(record.id)
+}
+
+// ---------------------------------------------------------------------------
+// Search
+
+async function runSearch(query: string) {
+  const trimmed = query.trim()
+  if (!trimmed) {
+    clearSearch()
+    return
+  }
+  searchState = { query: trimmed, status: 'loading', results: [] }
+  renderScoreLibrary()
+
+  const terms = trimmed.toLowerCase().split(/\s+/)
+  const localMatches = scoreLibrary.filter((score) => {
+    if (score.source === 'cloud') return false
+    const haystack = [score.name, score.tex ? readTexMetadata(score.tex, 'title') : '', score.tex ? readTexMetadata(score.tex, 'artist') : '']
+      .join(' ')
+      .toLowerCase()
+    return terms.every((term) => haystack.includes(term))
+  })
+  let remote: ScoreRecord[] = []
+  try {
+    const found = await cloudApi.search(trimmed)
+    remote = found.map((summary) => {
+      const existing = scoreLibrary.find((score) => score.id === summary.id)
+      return cloudRecord(summary, existing?.tex)
+    })
+  } catch {
+    // Offline or signed-out search still shows matching scores in this browser.
+  }
+  if (searchState?.query !== trimmed) return
+  searchState = { query: trimmed, status: 'done', results: [...localMatches, ...remote] }
+  renderScoreLibrary()
+}
+
+function clearSearch() {
+  searchState = undefined
+  searchInput.value = ''
+  renderScoreLibrary()
+}
+
+// ---------------------------------------------------------------------------
+// Accounts and sync
+
+function renderAccount() {
+  accountButton.classList.toggle('is-signed-in', Boolean(currentUser))
+  accountButton.textContent = currentUser ? currentUser.displayName : t('signIn')
+  accountButton.title = currentUser ? formatMessage('signedInAs', { email: currentUser.email }) : t('signIn')
+  if (currentUser) accountEmail.textContent = formatMessage('signedInAs', { email: currentUser.email })
+  if (libraryNoticeKey) libraryNotice.textContent = t(libraryNoticeKey)
+}
+
+function renderCodeHint() {
+  if (!pendingChallenge) return
+  codeHint.textContent = pendingChallenge.debugCode
+    ? `${formatMessage('codeSentTo', { email: pendingChallenge.email })} ${formatMessage('devCodeHint', { code: pendingChallenge.debugCode })}`
+    : formatMessage('codeSentTo', { email: pendingChallenge.email })
+}
+
+const providerIcons = {
+  google: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4285F4" d="M22.5 12.3c0-.8-.1-1.5-.2-2.2H12v4.2h5.9a5 5 0 0 1-2.2 3.3v2.7h3.5c2-1.9 3.3-4.7 3.3-8Z"/><path fill="#34A853" d="M12 23c3 0 5.5-1 7.2-2.7l-3.5-2.7c-1 .7-2.2 1-3.7 1-2.8 0-5.2-1.9-6.1-4.5H2.3v2.8A11 11 0 0 0 12 23Z"/><path fill="#FBBC05" d="M5.9 14.1a6.6 6.6 0 0 1 0-4.2V7.1H2.3a11 11 0 0 0 0 9.8l3.6-2.8Z"/><path fill="#EA4335" d="M12 5.4c1.6 0 3 .6 4.1 1.6l3.1-3.1A11 11 0 0 0 2.3 7.1l3.6 2.8C6.8 7.3 9.2 5.4 12 5.4Z"/></svg>',
+  apple: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M16.4 12.6c0-2.6 2.1-3.8 2.2-3.9a4.8 4.8 0 0 0-3.8-2c-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9a5 5 0 0 0-4.2 2.6c-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8 1.6 0 2 .8 3.4.8 1.4 0 2.3-1.3 3.1-2.5a11 11 0 0 0 1.4-2.9 4.5 4.5 0 0 1-2.6-4.1ZM13.9 5a4.5 4.5 0 0 0 1-3.3 4.6 4.6 0 0 0-3 1.6 4.3 4.3 0 0 0-1.1 3.2c1.2 0 2.3-.6 3.1-1.5Z"/></svg>',
+} as const
+
+function renderAuthProviders() {
+  authProviders.replaceChildren()
+  for (const provider of authProvidersState.oauth) {
+    const link = document.createElement('a')
+    link.className = 'provider-button'
+    const returnTo = `${location.pathname}${location.search}`
+    link.href = cloudApi.oauthStartUrl(provider, returnTo)
+    link.innerHTML = providerIcons[provider]
+    const label = document.createElement('span')
+    label.dataset.i18n = provider === 'google' ? 'continueWithGoogle' : 'continueWithApple'
+    label.textContent = t(provider === 'google' ? 'continueWithGoogle' : 'continueWithApple')
+    link.append(label)
+    authProviders.append(link)
+  }
+  authDivider.hidden = authProvidersState.oauth.length === 0
+}
+
+function resetAuthDialog() {
+  pendingChallenge = undefined
+  emailForm.hidden = false
+  codeForm.hidden = true
+  authCode.value = ''
+  authError.textContent = ''
+}
+
+function openAuthDialog(message = '') {
+  resetAuthDialog()
+  emailForm.hidden = authUnavailable
+  authError.textContent = authUnavailable ? t('signInUnavailable') : message
+  renderAuthProviders()
+  if (authUnavailable) authDivider.hidden = true
+  if (!authDialog.open) authDialog.showModal()
+  if (!authUnavailable) authEmail.focus()
+}
+
+// Local scores upload once the visitor signs in. Each keeps its browser id
+// as the upload key, so a retried upload never creates a duplicate.
+async function syncLocalScores() {
+  const localScores = scoreLibrary.filter((score) => score.source === 'local' && score.tex)
+  if (!localScores.length) return
+  let result
+  try {
+    result = await cloudApi.importScores(localScores.map((score) => ({ clientId: score.id, name: score.name, tex: score.tex! })))
+  } catch {
+    setLibraryNotice('syncFailed')
+    return
+  }
+  for (const { clientId, score } of result.imported) {
+    const local = localScores.find((item) => item.id === clientId)
+    const record = cloudRecord(score, local?.tex)
+    scoreLibrary = scoreLibrary.map((item) => (item.id === clientId ? record : item))
+    if (activeScore.id === clientId) activeScore = record
+  }
+  persistScoreLibrary()
+  setLibraryNotice(result.failed.length ? 'syncFailed' : undefined)
+}
+
+async function loadCloudLibrary() {
+  const summaries = await cloudApi.listScores()
+  const known = new Map(scoreLibrary.map((score) => [score.id, score]))
+  const cloudScores = summaries.map((summary) => cloudRecord(summary, known.get(summary.id)?.tex))
+  const localScores = scoreLibrary.filter((score) => score.source === 'local')
+  scoreLibrary = [...bundledScores, ...localScores, ...cloudScores]
+  const active = scoreLibrary.find((score) => score.id === activeScore.id)
+  if (active) activeScore = active
+}
+
+async function handleSignedIn(user: User) {
+  currentUser = user
+  renderAccount()
+  try {
+    await syncLocalScores()
+    await loadCloudLibrary()
+  } catch {
+    setLibraryNotice('syncFailed')
+  }
+  renderScoreLibrary()
+  renderCommunity()
+  if (activeScore.summary?.isPublished) void refreshComments(activeScore.id)
+}
+
+async function signOut() {
+  try {
+    await cloudApi.logout()
+  } catch (error) {
+    accountError.textContent = errorText(error)
+    return
+  }
+  currentUser = null
+  accountDialog.close()
+  scoreLibrary = scoreLibrary.filter((score) => score.source === 'bundled' || score.source === 'local')
+  setLibraryNotice(undefined)
+  renderAccount()
+  if (searchState) void runSearch(searchState.query)
+  if (activeScore.source === 'cloud') void loadScore(defaultScore)
+  else {
+    renderScoreLibrary()
+    renderCommunity()
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Community: publishing, ratings, and comments for the active score
+
+async function refreshComments(scoreId: string) {
+  try {
+    const comments = await cloudApi.comments(scoreId)
+    if (activeScore.id !== scoreId) return
+    activeComments = { scoreId, comments }
+    renderCommunity()
+  } catch {
+    // The rest of the panel still works without the comment list.
+  }
+}
+
+function updateActiveSummary(summary: ScoreSummary) {
+  replaceInLibrary(cloudRecord(summary, activeScore.tex))
+  renderScoreLibrary()
+  renderCommunity()
+}
+
+function createHint(text: string) {
+  const hint = document.createElement('p')
+  hint.className = 'community-hint'
+  hint.textContent = text
+  return hint
+}
+
+function createCommunityError() {
+  const error = document.createElement('p')
+  error.className = 'form-error'
+  error.setAttribute('role', 'alert')
+  return error
+}
+
+function createRatingControls(summary: ScoreSummary) {
+  const block = document.createElement('div')
+  block.className = 'rating-block'
+  const average = document.createElement('p')
+  average.className = 'rating-average'
+  const stars = document.createElement('span')
+  stars.className = 'rating-stars'
+  stars.setAttribute('aria-hidden', 'true')
+  const rounded = Math.round(summary.rating.average ?? 0)
+  stars.textContent = '★★★★★'.slice(0, rounded) + '☆☆☆☆☆'.slice(0, 5 - rounded)
+  const label = document.createElement('span')
+  label.textContent = formatRating(summary)
+  average.append(stars, label)
+  block.append(average)
+
+  if (!currentUser) {
+    block.append(createHint(t('signInToRate')))
+    return block
+  }
+  if (summary.isOwner) {
+    block.append(createHint(t('ownScoreRating')))
+    return block
+  }
+  const picker = document.createElement('div')
+  picker.className = 'star-picker'
+  picker.setAttribute('role', 'group')
+  picker.setAttribute('aria-label', t('yourRating'))
+  const pickerLabel = document.createElement('span')
+  pickerLabel.textContent = t('yourRating')
+  picker.append(pickerLabel)
+  const error = createCommunityError()
+  for (let value = 1; value <= 5; value++) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'star-button'
+    button.classList.toggle('is-filled', (summary.rating.mine ?? 0) >= value)
+    button.setAttribute('aria-pressed', String(summary.rating.mine === value))
+    button.setAttribute('aria-label', formatMessage('rateStars', { count: value }))
+    button.title = formatMessage('rateStars', { count: value })
+    button.textContent = '★'
+    button.addEventListener('click', async () => {
+      try {
+        updateActiveSummary(await cloudApi.rate(summary.id, value))
+      } catch (err) {
+        error.textContent = errorText(err)
+      }
+    })
+    picker.append(button)
+  }
+  block.append(picker, error)
+  return block
+}
+
+function createComments(summary: ScoreSummary) {
+  const block = document.createElement('div')
+  block.className = 'comments-block'
+  const heading = document.createElement('h3')
+  heading.textContent = `${t('comments')} (${summary.commentCount})`
+  block.append(heading)
+
+  const list = document.createElement('ol')
+  list.className = 'comment-list'
+  const comments = activeComments?.scoreId === summary.id ? activeComments.comments : []
+  if (!comments.length) list.append(Object.assign(document.createElement('li'), { className: 'comment-empty', textContent: t('noComments') }))
+  for (const comment of comments) {
+    const item = document.createElement('li')
+    item.className = 'comment'
+    const meta = document.createElement('div')
+    meta.className = 'comment-meta'
+    const author = document.createElement('strong')
+    author.textContent = comment.author.displayName
+    const time = document.createElement('time')
+    time.dateTime = comment.createdAt
+    time.textContent = new Date(comment.createdAt).toLocaleDateString(localeLanguageTags[localePreference], { dateStyle: 'medium' })
+    meta.append(author, time)
+    if (comment.canDelete) {
+      const remove = document.createElement('button')
+      remove.type = 'button'
+      remove.className = 'comment-delete'
+      remove.textContent = '×'
+      remove.setAttribute('aria-label', t('deleteComment'))
+      remove.title = t('deleteComment')
+      remove.addEventListener('click', async () => {
+        try {
+          await cloudApi.deleteComment(comment.id)
+          activeComments = { scoreId: summary.id, comments: comments.filter((item) => item.id !== comment.id) }
+          updateActiveSummary({ ...summary, commentCount: Math.max(0, summary.commentCount - 1) })
+        } catch (err) {
+          showError(errorText(err))
+        }
+      })
+      meta.append(remove)
+    }
+    const body = document.createElement('p')
+    body.textContent = comment.body
+    item.append(meta, body)
+    list.append(item)
+  }
+  block.append(list)
+
+  if (!currentUser) return block
+  const form = document.createElement('form')
+  form.className = 'comment-form'
+  const textarea = document.createElement('textarea')
+  textarea.maxLength = 2000
+  textarea.rows = 2
+  textarea.required = true
+  textarea.placeholder = t('commentPlaceholder')
+  textarea.setAttribute('aria-label', t('commentPlaceholder'))
+  const submit = document.createElement('button')
+  submit.type = 'submit'
+  submit.className = 'primary-button'
+  submit.textContent = t('postComment')
+  const error = createCommunityError()
+  form.append(textarea, submit)
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault()
+    const body = textarea.value.trim()
+    if (!body) return
+    submit.disabled = true
+    try {
+      const comment = await cloudApi.addComment(summary.id, body)
+      activeComments = { scoreId: summary.id, comments: [...comments, comment] }
+      updateActiveSummary({ ...summary, commentCount: summary.commentCount + 1 })
+    } catch (err) {
+      error.textContent = errorText(err)
+      submit.disabled = false
+    }
+  })
+  block.append(form, error)
+  return block
+}
+
+function renderCommunity() {
+  communityBody.replaceChildren()
+  const score = activeScore
+  const summary = score.summary
+  communityScore.textContent = summary
+    ? [score.name, formatMessage('byOwner', { name: summary.owner.displayName })].join(' · ')
+    : score.name
+
+  if (score.source === 'bundled') {
+    communityBody.append(createHint(t('builtInHint')))
+    return
+  }
+  if (!summary) {
+    communityBody.append(createHint(currentUser ? t('syncFailed') : t('signInToSave')))
+    if (!currentUser) {
+      const signIn = document.createElement('button')
+      signIn.type = 'button'
+      signIn.className = 'primary-button'
+      signIn.textContent = t('signIn')
+      signIn.addEventListener('click', () => openAuthDialog())
+      communityBody.append(signIn)
+    }
+    return
+  }
+
+  if (summary.isOwner) {
+    const publishRow = document.createElement('div')
+    publishRow.className = 'publish-row'
+    const status = createHint(summary.isPublished ? t('publishedHint') : t('publishHint'))
+    const toggle = document.createElement('button')
+    toggle.type = 'button'
+    toggle.className = summary.isPublished ? 'secondary-button' : 'primary-button'
+    toggle.textContent = summary.isPublished ? t('unpublish') : t('publish')
+    const error = createCommunityError()
+    toggle.addEventListener('click', async () => {
+      toggle.disabled = true
+      try {
+        const updated = await cloudApi.setPublished(summary.id, !summary.isPublished)
+        updateActiveSummary(updated)
+        if (updated.isPublished) void refreshComments(updated.id)
+      } catch (err) {
+        error.textContent = errorText(err)
+        toggle.disabled = false
+      }
+    })
+    publishRow.append(status, toggle)
+    communityBody.append(publishRow, error)
+  }
+  if (!summary.isPublished) return
+  communityBody.append(createRatingControls(summary), createComments(summary))
 }
 
 applyLocale(localePreference)
@@ -758,12 +1375,11 @@ function handleAudioResumeGesture(event: Event) {
   recoverAudioAfterBackgrounding()
 }
 
-function loadTex(tex: string, name = loadedName, scoreId = activeScoreId) {
+function loadTex(tex: string, name = loadedName) {
   hideError()
   setRenderState('renderingScore', 'loading')
   isPlayerReady = false
   audioResumePending = false
-  activeScoreId = scoreId
   playPause.disabled = true
   stop.disabled = true
   progressFill.style.width = '0%'
@@ -791,8 +1407,7 @@ function handleFile(file: File) {
       showError(t('emptyFile'), 'emptyFile')
       return
     }
-    const score = addScore(file.name, tex)
-    loadTex(score.tex, score.name, score.id)
+    void addScore(file.name, tex).then(loadScore)
   })
   reader.addEventListener('error', () => showError(t('fileCouldNotOpen'), 'fileCouldNotOpen'))
   reader.readAsText(file)
@@ -935,7 +1550,7 @@ if (modelContext?.registerTool) {
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
       annotations: { readOnlyHint: false, untrustedContentHint: false },
       execute() {
-        loadScore(defaultScore.id)
+        void loadScore(defaultScore)
         return { title: defaultScore.name, filename: defaultScore.name, status: 'loaded' }
       },
     }, { signal: webMcpLifecycle.signal })
@@ -973,4 +1588,111 @@ if (modelContext?.registerTool) {
   void registerWebMcpTools().catch(() => webMcpLifecycle.abort())
 }
 
-loadScore(defaultScore.id)
+searchForm.addEventListener('submit', (event) => {
+  event.preventDefault()
+  void runSearch(searchInput.value)
+})
+clearSearchButton.addEventListener('click', () => {
+  clearSearch()
+  searchInput.focus()
+})
+
+accountButton.addEventListener('click', async () => {
+  if (!currentUser) {
+    // The API may have come up since the page loaded; check again first.
+    if (authUnavailable) await initializeAccount()
+    if (!currentUser) openAuthDialog()
+    return
+  }
+  accountError.textContent = ''
+  displayNameInput.value = currentUser.displayName
+  accountDialog.showModal()
+})
+
+emailForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  authError.textContent = ''
+  const submit = emailForm.querySelector<HTMLButtonElement>('button[type="submit"]')!
+  submit.disabled = true
+  try {
+    const email = authEmail.value.trim()
+    const challenge = await cloudApi.startEmail(email)
+    pendingChallenge = { id: challenge.challengeId, email, debugCode: challenge.debugCode }
+    renderCodeHint()
+    emailForm.hidden = true
+    codeForm.hidden = false
+    authCode.focus()
+  } catch (error) {
+    authError.textContent = errorText(error)
+  } finally {
+    submit.disabled = false
+  }
+})
+
+codeForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  if (!pendingChallenge) return
+  authError.textContent = ''
+  const submit = codeForm.querySelector<HTMLButtonElement>('button[type="submit"]')!
+  submit.disabled = true
+  try {
+    const user = await cloudApi.verifyEmail(pendingChallenge.id, authCode.value.trim())
+    authDialog.close()
+    resetAuthDialog()
+    await handleSignedIn(user)
+  } catch (error) {
+    authError.textContent = errorText(error)
+  } finally {
+    submit.disabled = false
+  }
+})
+
+document.querySelector<HTMLButtonElement>('#auth-restart')!.addEventListener('click', () => {
+  resetAuthDialog()
+  authEmail.focus()
+})
+
+displayNameForm.addEventListener('submit', async (event) => {
+  event.preventDefault()
+  accountError.textContent = ''
+  try {
+    currentUser = await cloudApi.updateDisplayName(displayNameInput.value.trim())
+    renderAccount()
+    accountDialog.close()
+    if (currentUser) await loadCloudLibrary()
+    renderScoreLibrary()
+    renderCommunity()
+  } catch (error) {
+    accountError.textContent = errorText(error)
+  }
+})
+
+document.querySelector<HTMLButtonElement>('#sign-out')!.addEventListener('click', () => void signOut())
+
+async function initializeAccount() {
+  // A failed Google/Apple sign-in lands back here with ?auth_error=...
+  const url = new URL(location.href)
+  const signInError = url.searchParams.get('auth_error')
+  if (signInError) {
+    url.searchParams.delete('auth_error')
+    history.replaceState(history.state, '', url)
+  }
+  try {
+    authProvidersState = await cloudApi.providers()
+    authUnavailable = false
+  } catch {
+    // Without the API only visitor mode works; the sign-in dialog says so.
+    authUnavailable = true
+    return
+  }
+  if (signInError) openAuthDialog(t('authFailed'))
+  try {
+    const user = await cloudApi.me()
+    if (user) await handleSignedIn(user)
+  } catch {
+    // Stay in visitor mode; local scores keep working.
+  }
+}
+
+void loadScore(defaultScore)
+void initializeAccount()

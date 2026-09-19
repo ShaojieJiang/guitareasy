@@ -8,7 +8,7 @@
     "sync-player-assets": "node scripts/sync-player-assets.mjs",
     "sync": "npm run sync-seed-scores && npm run sync-player-assets",
     "predev": "npm run sync",
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --local-upstream localhost:8787",
     "prebuild": "npm run sync",
     "build": "tsc --noEmit",
     "predeploy": "npm run sync",
@@ -16,9 +16,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^0.10.3",
     "@modelcontextprotocol/ext-apps": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",
     "agents": "^0.23.0",
+    "worker-mailer": "^1.2.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
