@@ -4,6 +4,7 @@ import {
   applyHostFonts,
   applyHostStyleVariables,
   type McpUiHostContext,
+  type McpUiTheme,
 } from '@modelcontextprotocol/ext-apps'
 import type { CallToolResult } from '@modelcontextprotocol/client'
 import './mcp-app.css'
@@ -15,7 +16,36 @@ const LOAD_SCORE_MESSAGE = 'guitareasy:load-score'
 const HOST_CONTEXT_MESSAGE = 'guitareasy:host-context'
 const OPEN_AUDIO_PLAYER_MESSAGE = 'guitareasy:open-audio-player'
 
-type ScorePayload = { name: string; tex: string; playbackUrl?: string }
+type ScoreRenderPalette = {
+  staffLineColor: string
+  barSeparatorColor: string
+  barNumberColor: string
+  mainGlyphColor: string
+  secondaryGlyphColor: string
+  scoreInfoColor: string
+}
+
+const SCORE_RENDER_PALETTES: Record<McpUiTheme, ScoreRenderPalette> = {
+  light: {
+    staffLineColor: '#8b919c',
+    barSeparatorColor: '#3e434d',
+    barNumberColor: '#675db4',
+    mainGlyphColor: '#20242d',
+    secondaryGlyphColor: 'rgba(32, 36, 45, 0.5)',
+    scoreInfoColor: '#20242d',
+  },
+  dark: {
+    staffLineColor: '#9299a6',
+    barSeparatorColor: '#c1c7d0',
+    barNumberColor: '#b4aaff',
+    mainGlyphColor: '#f1f3f5',
+    secondaryGlyphColor: 'rgba(241, 243, 245, 0.58)',
+    scoreInfoColor: '#f1f3f5',
+  },
+}
+
+type ThemePreference = McpUiTheme | 'system'
+type ScorePayload = { name: string; tex: string; playbackUrl?: string; theme?: ThemePreference }
 type PlayerReadyMessage = { type: typeof PLAYER_READY_MESSAGE }
 type LoadScoreMessage = { type: typeof LOAD_SCORE_MESSAGE; score: ScorePayload }
 type HostContextMessage = { type: typeof HOST_CONTEXT_MESSAGE; context: McpUiHostContext }
@@ -23,20 +53,59 @@ type ParentToPlayerMessage = LoadScoreMessage | HostContextMessage
 type OpenAudioPlayerMessage = { type: typeof OPEN_AUDIO_PLAYER_MESSAGE; url: string }
 
 const root = document.getElementById('app')!
+let nativePlayerThemeChange: ((theme: McpUiTheme) => void) | undefined
+let requestedTheme: ThemePreference = 'system'
+let hostTheme: McpUiTheme | undefined
+
+function getScoreRenderPalette(theme: McpUiTheme) {
+  return SCORE_RENDER_PALETTES[theme]
+}
+
+function getSystemTheme(): McpUiTheme {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function getEffectiveTheme(preference: ThemePreference = requestedTheme): McpUiTheme {
+  if (preference !== 'system') return preference
+  return hostTheme ?? getSystemTheme()
+}
+
+function applyThemePreference(preference: ThemePreference) {
+  requestedTheme = preference
+  const effectiveTheme = getEffectiveTheme(preference)
+  applyDocumentTheme(effectiveTheme)
+  nativePlayerThemeChange?.(effectiveTheme)
+}
 
 function extractScore(result: CallToolResult): ScorePayload | undefined {
   const data = result.structuredContent as
-    | { name?: string; tex?: string; playbackUrl?: string }
+    | { name?: string; tex?: string; playbackUrl?: string; theme?: unknown }
     | undefined
   if (!data?.tex) return undefined
-  return { name: data.name ?? 'Untitled.atex', tex: data.tex, playbackUrl: data.playbackUrl }
+  const theme = data.theme === 'light' || data.theme === 'dark' || data.theme === 'system'
+    ? data.theme
+    : 'system'
+  return {
+    name: data.name ?? 'Untitled.atex',
+    tex: data.tex,
+    playbackUrl: data.playbackUrl,
+    theme,
+  }
 }
 
 function handleHostContextChanged(ctx: McpUiHostContext) {
-  if (ctx.theme) applyDocumentTheme(ctx.theme)
+  if (ctx.theme) {
+    hostTheme = ctx.theme
+    if (requestedTheme === 'system') applyThemePreference('system')
+  }
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables)
   if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts)
 }
+
+const systemThemeMediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+systemThemeMediaQuery.addEventListener('change', () => {
+  if (requestedTheme === 'system' && !hostTheme) applyThemePreference('system')
+})
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'An error occurred.'
@@ -51,7 +120,10 @@ function connectToMcpHost(
 
   app.ontoolresult = (result) => {
     const score = extractScore(result)
-    if (score) onScore(score)
+    if (score) {
+      applyThemePreference(score.theme ?? 'system')
+      onScore(score)
+    }
     else onError('No score data received from the tool call.')
   }
   app.onhostcontextchanged = (context) => {
@@ -223,6 +295,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
   const playerProgress = document.getElementById('player-progress')!
   const progressFill = document.getElementById('progress-fill') as HTMLElement
   const position = document.getElementById('position')!
+  const initialTheme = getEffectiveTheme()
   let isSynthReady = false
   let hasScore = false
   let currentScore: ScorePayload | undefined
@@ -283,6 +356,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       layoutMode: alphaTab.LayoutMode.Page,
       scale: 0.9,
       staveProfile: alphaTab.StaveProfile.Tab,
+      resources: getScoreRenderPalette(initialTheme),
     },
     player: {
       enablePlayer: true,
@@ -303,6 +377,21 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       scrollOffsetY: -24,
     },
   })
+
+  function applyScoreTheme(theme: McpUiTheme) {
+    const palette = getScoreRenderPalette(theme)
+    const resources = api.settings.display.resources
+    resources.staffLineColor = alphaTab.model.Color.fromJson(palette.staffLineColor)!
+    resources.barSeparatorColor = alphaTab.model.Color.fromJson(palette.barSeparatorColor)!
+    resources.barNumberColor = alphaTab.model.Color.fromJson(palette.barNumberColor)!
+    resources.mainGlyphColor = alphaTab.model.Color.fromJson(palette.mainGlyphColor)!
+    resources.secondaryGlyphColor = alphaTab.model.Color.fromJson(palette.secondaryGlyphColor)!
+    resources.scoreInfoColor = alphaTab.model.Color.fromJson(palette.scoreInfoColor)!
+    api.updateSettings()
+    if (api.score) api.render({ reuseViewport: true })
+  }
+
+  nativePlayerThemeChange = applyScoreTheme
 
   // Give inline audio a chance to come up; if the synth never becomes ready
   // in a host that blocks it, degrade to the open-a-page flow instead of
@@ -397,6 +486,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
 
   function loadScore(score: ScorePayload) {
     currentScore = score
+    applyThemePreference(score.theme ?? 'system')
     songTitle.textContent = score.name
     setStatus('Rendering score…')
     api.tex(score.tex)

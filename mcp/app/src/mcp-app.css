@@ -1,20 +1,35 @@
 :root {
-  color-scheme: light dark;
-  --at-bg: #ffffff;
-  --at-fg: #14161c;
-  --at-muted: #6b7280;
-  --at-border: #e5e7eb;
-  --at-accent: #4f46e5;
+  color-scheme: light;
+  --at-bg: #f7f8fa;
+  --at-surface: #ffffff;
+  --at-surface-raised: #ffffff;
+  --at-fg: #20242d;
+  --at-muted: #5e6673;
+  --at-subtle: #78818f;
+  --at-border: #d9dde5;
+  --at-border-strong: #c3c9d4;
+  --at-accent: #5b4dc1;
+  --at-accent-soft: rgba(91, 77, 193, 0.1);
+  --at-accent-contrast: #ffffff;
+  --at-focus: #7568e2;
   --cursor-bar: rgba(119, 112, 183, 0.12);
   --cursor-beat: #5b4dc1;
 }
 
 :root[data-theme='dark'] {
-  --at-bg: #14161c;
-  --at-fg: #f3f4f6;
-  --at-muted: #9ca3af;
-  --at-border: #2a2d37;
-  --at-accent: #818cf8;
+  color-scheme: dark;
+  --at-bg: #11131a;
+  --at-surface: #191c25;
+  --at-surface-raised: #20242e;
+  --at-fg: #f1f3f5;
+  --at-muted: #a7adba;
+  --at-subtle: #858d9b;
+  --at-border: rgba(238, 241, 240, 0.14);
+  --at-border-strong: rgba(238, 241, 240, 0.24);
+  --at-accent: #a79cff;
+  --at-accent-soft: rgba(167, 156, 255, 0.14);
+  --at-accent-contrast: #171526;
+  --at-focus: #b8afff;
   --cursor-bar: rgba(119, 112, 183, 0.14);
   --cursor-beat: #6b5bdf;
 }
@@ -34,6 +49,7 @@ body {
     -apple-system,
     'Segoe UI',
     sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
@@ -53,14 +69,16 @@ body {
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  padding: 0.75rem 1rem 0.5rem;
+  padding: 0.85rem 1rem 0.65rem;
   border-bottom: 1px solid var(--at-border);
+  background: var(--at-surface);
 }
 
 .player-header h1 {
   font-size: 0.95rem;
   font-weight: 600;
   margin: 0;
+  letter-spacing: -0.01em;
 }
 
 .player-header span {
@@ -72,12 +90,25 @@ body {
   padding: 0.5rem 1rem;
   font-size: 0.8rem;
   color: var(--at-muted);
+  background: var(--at-surface);
 }
 
 .notation-viewport {
   flex: 1;
   overflow: auto;
   padding: 0.5rem 1rem 1rem;
+  background: var(--at-bg);
+  scrollbar-color: var(--at-border-strong) transparent;
+}
+
+.notation-viewport:focus-visible {
+  outline: 2px solid var(--at-focus);
+  outline-offset: -2px;
+}
+
+.notation-canvas {
+  min-height: 100%;
+  color: var(--at-fg);
 }
 
 .notation-canvas .at-cursor-bar {
@@ -107,12 +138,13 @@ body {
   gap: 0.75rem;
   padding: 0.6rem 1rem;
   border-top: 1px solid var(--at-border);
+  background: var(--at-surface);
 }
 
 .player-bar button {
   border: 1px solid var(--at-border);
   background: var(--at-accent);
-  color: white;
+  color: var(--at-accent-contrast);
   border-radius: 999px;
   width: 2.25rem;
   height: 2.25rem;
@@ -123,6 +155,17 @@ body {
   font-size: 1rem;
   line-height: 1;
   flex: none;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.player-bar button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--at-accent) 86%, white);
+}
+
+.player-bar button:focus-visible {
+  outline: 2px solid var(--at-focus);
+  outline-offset: 3px;
 }
 
 .player-bar button:disabled {
@@ -133,6 +176,11 @@ body {
 .player-bar button.is-secondary {
   background: transparent;
   color: var(--at-fg);
+}
+
+.player-bar button.is-secondary:hover:not(:disabled) {
+  background: var(--at-accent-soft);
+  border-color: var(--at-border-strong);
 }
 
 .player-time {
@@ -147,7 +195,7 @@ body {
   flex: 1;
   height: 4px;
   border-radius: 999px;
-  background: var(--at-border);
+  background: var(--at-border-strong);
   overflow: hidden;
   min-width: 3rem;
 }
@@ -165,6 +213,7 @@ body {
   font-size: 0.9rem;
   text-align: center;
   padding: 2rem;
+  background: var(--at-bg);
 }
 
 .player-bridge {

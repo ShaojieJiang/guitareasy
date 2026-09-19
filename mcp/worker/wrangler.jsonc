@@ -5,9 +5,34 @@
   "compatibility_date": "2026-09-18",
   "compatibility_flags": ["nodejs_compat"],
   "rules": [{ "type": "Text", "globs": ["**/*.atex"], "fallthrough": true }],
+  "vars": {
+    "ENVIRONMENT": "production",
+    "PUBLIC_ORIGIN": "https://guitareasy.app"
+  },
+  // Secrets (set with `wrangler secret put`, or in .env locally):
+  // AUTH_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, APPLE_CLIENT_ID,
+  // APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY, and the SMTP_* settings
+  // for sign-in emails (SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD,
+  // SMTP_FROM, SMTP_FROM_NAME, SMTP_STARTTLS).
+  // Daily cleanup of expired sessions and sign-in codes.
+  "triggers": { "crons": ["17 3 * * *"] },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "guitareasy",
+      "database_id": "d84f6a39-9031-40d4-b490-c1ccdc18e13c",
+      "migrations_dir": "migrations"
+    }
+  ],
   "kv_namespaces": [
     {
       "binding": "SCORES_KV",
+      "id": "fe7b595463574ab08cae0c17b8afb4e5"
+    },
+    {
+      // MCP OAuth clients, grants, and tokens. Shares the namespace with
+      // player sessions; the provider prefixes its own keys.
+      "binding": "OAUTH_KV",
       "id": "fe7b595463574ab08cae0c17b8afb4e5"
     }
   ],
@@ -25,12 +50,14 @@
     // falling through — which would swallow POST/DELETE /mcp, the actual
     // JSON-RPC endpoint. The player assets also go through the Worker first
     // so it can add CORS headers required by ChatGPT's sandbox iframe.
-    "run_worker_first": ["/mcp", "/mcp-app/*"]
+    "run_worker_first": ["/mcp", "/mcp/public", "/mcp-app/*", "/api/*", "/oauth/*", "/.well-known/*"]
   },
   "routes": [
-    {
-      "pattern": "guitareasy.app/mcp*",
-      "zone_name": "guitareasy.app"
-    }
+    { "pattern": "guitareasy.app/mcp*", "zone_name": "guitareasy.app" },
+    // Website REST API (sign-in, cloud scores, ratings, comments, search).
+    { "pattern": "guitareasy.app/api/*", "zone_name": "guitareasy.app" },
+    // MCP OAuth authorization server and its discovery metadata.
+    { "pattern": "guitareasy.app/oauth/*", "zone_name": "guitareasy.app" },
+    { "pattern": "guitareasy.app/.well-known/oauth-*", "zone_name": "guitareasy.app" }
   ]
 }

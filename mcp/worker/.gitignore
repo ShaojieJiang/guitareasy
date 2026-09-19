@@ -3,4 +3,5 @@ dist
 .wrangler
 src/seed
 public
-.dev.vars
+.env
+src/player-version.ts

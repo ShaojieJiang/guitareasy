@@ -9,7 +9,9 @@ ChatGPT converts the notations, GuitarEasy plays it, you practise! Your favourit
 - Render alphaTex notation in the browser with [alphaTab](https://www.alphatab.net/).
 - Play and pause scores with the built-in MIDI player and animated cursor.
 - Load `.atex`, `.tex`, or `.txt` files by browsing or dragging and dropping.
-- Keep uploaded scores in the browser's local storage for later sessions.
+- Keep uploaded scores in the browser's local storage for later sessions, or sign in with Google, Apple, or an emailed one-time code to keep them in your account.
+- Publish your scores so other players can find them, rate them from one to five stars, and comment on them.
+- Search built-in, personal, and published scores by file name, song title, artist, or uploader.
 - Start with bundled example scores, including *Canon in D*, *Game of Thrones Theme*, and *Spanish Romance*.
 - Choose system, light, or dark colour mode and collapse the file-controls panel.
 - Use the Space key to play or pause the active score.
@@ -28,11 +30,14 @@ npm run dev
 
 Then open the local URL printed by Vite. By default, the development server uses port `65432`.
 
+`npm run dev` starts both the website and the worker in `mcp/worker`, which serves accounts, cloud scores, search, and community features; Vite proxies `/api` to it. Install the worker's dependencies once with `npm install` in `mcp/worker`, and copy its `.env.example` to `.env`. Use `npm run dev:web` to run only the website, in visitor mode with local scores.
+
 ## Available scripts
 
 | Command | Description |
 | --- | --- |
-| `npm run dev` | Start the Vite development server. |
+| `npm run dev` | Start the website and the accounts API worker for local development. |
+| `npm run dev:web` | Start only the Vite development server (visitor mode). |
 | `npm run build` | Type-check the project and create a production build in `dist/`. |
 | `npm run preview` | Preview the production build locally. |
 
@@ -42,14 +47,18 @@ Then open the local URL printed by Vite. By default, the development server uses
 2. Read the rendered notation in the preview panel.
 3. Use the play button or press Space to start and pause MIDI playback.
 4. Use the stop button to return playback to the beginning.
+5. Search with the box above the score library; press Enter or the Search button to run it.
+6. Sign in to save scores to your account, then publish, rate, and comment on scores in the community panel under the player.
 
-Uploaded scores and display preferences are stored only in the current browser's local storage. They are not included in the repository or uploaded by the app.
+Visitors' uploaded scores and display preferences are stored only in the current browser's local storage. When you sign in, those local scores are uploaded to your account once and removed from the browser. Signed-in scores are private until you publish them.
 
 ## Project structure
 
 ```text
 src/
   main.ts              Application UI, score library, and alphaTab integration
+  api.ts               Client for the accounts and cloud-score API
+  community-messages.ts  Interface strings for accounts, search, and community features
   style.css            Application styles and responsive layout
   assets/scores/       Bundled alphaTex example scores
 public/
@@ -72,8 +81,9 @@ Deploy the generated `dist/` directory to any static web host. The repository in
 ## MCP server
 
 Deployed at **https://guitareasy.app/mcp**. `mcp/` contains a separate, deployable
-[MCP](https://modelcontextprotocol.io) server for uploading/downloading `.atex` files and playing
-them back inline inside a compatible MCP host via an MCP Apps UI resource, connectable from
+[MCP](https://modelcontextprotocol.io) server and the website's API: accounts, cloud scores,
+publishing, ratings, comments, and search, plus inline playback inside a compatible MCP host via an
+MCP Apps UI resource. MCP hosts sign in through OAuth with the same account options. Connectable from
 Claude.ai/Desktop, ChatGPT (developer mode), or as a one-click [Claude Desktop
 Extension](mcp/desktop-extension/README.md) (`.mcpb`). See [`mcp/README.md`](mcp/README.md).
 
