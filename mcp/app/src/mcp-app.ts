@@ -7,6 +7,7 @@ import {
   type McpUiTheme,
 } from '@modelcontextprotocol/ext-apps'
 import type { CallToolResult } from '@modelcontextprotocol/client'
+import alphaTabSynthWorkerUrl from './alphatab-synth-worker?worker&url'
 import './mcp-app.css'
 
 const PLAYER_ASSET_ORIGIN = 'https://guitareasy.app'
@@ -115,6 +116,7 @@ function connectToMcpHost(
   onScore: (score: ScorePayload) => void,
   onContext: (context: McpUiHostContext) => void,
   onError: (message: string) => void,
+  onConnected?: () => void,
 ) {
   const app = new App({ name: 'GuitarEasy player', version: '1.1.0' })
 
@@ -140,6 +142,7 @@ function connectToMcpHost(
         handleHostContextChanged(context)
         onContext(context)
       }
+      onConnected?.()
     })
     .catch((error: unknown) => onError(errorMessage(error)))
 
@@ -190,6 +193,19 @@ function isTrustedPlaybackUrl(value: string) {
   }
 }
 
+// How long to wait for the nested first-party frame to report itself ready
+// before giving up on it and rendering in the host's own widget frame.
+const BRIDGE_READY_TIMEOUT_MS = 2500
+
+// A host that blocks nested frames blocks them silently: the iframe fires no
+// error, it simply never loads. Read the CSP the host says it applied, when
+// it reports one, so those hosts skip the wait entirely.
+function hostAllowsNestedPlayerFrame(app: App): boolean | undefined {
+  const csp = app.getHostCapabilities()?.sandbox?.csp
+  if (!csp) return undefined
+  return (csp.frameDomains ?? []).some((domain) => domain.replace(/\/$/, '') === PLAYER_ASSET_ORIGIN)
+}
+
 function startSandboxBridge() {
   root.innerHTML = `
     <div class="player-bridge">
@@ -208,6 +224,10 @@ function startSandboxBridge() {
   let isBridgeReady = false
   let pendingScore: ScorePayload | undefined
   let pendingContext: McpUiHostContext | undefined
+  // Set once the bridge has been abandoned and alphaTab runs in this frame.
+  let framePlayer: NativePlayer | undefined
+  let isFallingBack = false
+  let readyTimer: ReturnType<typeof setTimeout> | undefined
 
   function postToPlayer(message: ParentToPlayerMessage) {
     frame.contentWindow?.postMessage(message, PLAYER_ASSET_ORIGIN)
@@ -219,10 +239,32 @@ function startSandboxBridge() {
     if (pendingScore) postToPlayer({ type: LOAD_SCORE_MESSAGE, score: pendingScore })
   }
 
+  // claude.ai enforces `frame-src 'self' blob: data:` and drops the
+  // frameDomains the resource declares, so the nested player frame never
+  // loads there and the widget would sit on its placeholder forever. Render
+  // alphaTab directly in the host's widget frame instead; audio still
+  // degrades to the open-a-page flow if this frame can't play either.
+  async function renderInHostFrame(reason: string) {
+    if (isFallingBack) return
+    isFallingBack = true
+    if (readyTimer !== undefined) clearTimeout(readyTimer)
+    console.warn(`GuitarEasy: ${reason} Rendering the player in the host's frame instead.`)
+    try {
+      framePlayer = await startNativePlayer({ mode: 'embedded', hostApp })
+      // Read `pendingScore` only now: loading alphaTab is async, and the
+      // tool result may have landed while it was still importing.
+      if (pendingScore) framePlayer.loadScore(pendingScore)
+    } catch (error) {
+      root.innerHTML = `<div class="empty-state">${errorMessage(error)}</div>`
+    }
+  }
+
   window.addEventListener('message', async (event) => {
     if (event.origin !== PLAYER_ASSET_ORIGIN || event.source !== frame.contentWindow) return
     if (isPlayerReadyMessage(event.data)) {
+      if (isFallingBack) return
       isBridgeReady = true
+      if (readyTimer !== undefined) clearTimeout(readyTimer)
       bridgeStatus.hidden = true
       flushPendingMessages()
       return
@@ -231,7 +273,7 @@ function startSandboxBridge() {
 
     try {
       const result = await hostApp.openLink({ url: event.data.url })
-      if (result.isError) throw new Error('ChatGPT did not open the audio player.')
+      if (result.isError) throw new Error('The host did not open the audio player.')
     } catch (error) {
       bridgeStatus.hidden = false
       bridgeStatus.textContent = errorMessage(error)
@@ -239,31 +281,113 @@ function startSandboxBridge() {
   })
 
   frame.addEventListener('error', () => {
-    bridgeStatus.hidden = false
-    bridgeStatus.textContent = 'The audio player could not be loaded.'
+    void renderInHostFrame('The nested player frame failed to load.')
   })
 
   const hostApp = connectToMcpHost(
     (score) => {
+      // Always recorded: a fallback still importing alphaTab picks it up
+      // from here once it is ready.
       pendingScore = score
-      if (isBridgeReady) postToPlayer({ type: LOAD_SCORE_MESSAGE, score })
+      if (framePlayer) framePlayer.loadScore(score)
+      else if (isFallingBack) return
+      else if (isBridgeReady) postToPlayer({ type: LOAD_SCORE_MESSAGE, score })
       else bridgeStatus.textContent = 'Loading score player…'
     },
     (context) => {
       pendingContext = context
-      if (isBridgeReady) postToPlayer({ type: HOST_CONTEXT_MESSAGE, context })
+      // After the fallback the context is already applied to this document by
+      // `handleHostContextChanged`; there is no nested frame to forward to.
+      if (!isFallingBack && isBridgeReady) postToPlayer({ type: HOST_CONTEXT_MESSAGE, context })
     },
     (message) => {
+      if (framePlayer) {
+        framePlayer.setStatus(message)
+        return
+      }
+      if (isFallingBack) return
       bridgeStatus.hidden = false
       bridgeStatus.textContent = message
     },
+    () => {
+      if (hostAllowsNestedPlayerFrame(hostApp) === false) {
+        void renderInHostFrame('This host does not allow the player to load in a nested frame.')
+      }
+    },
   )
+
+  // Whatever the host advertises, a frame that never reports ready is a
+  // frame that isn't going to load.
+  readyTimer = setTimeout(() => {
+    if (!isBridgeReady) void renderInHostFrame('The nested player frame did not load in time.')
+  }, BRIDGE_READY_TIMEOUT_MS)
 }
 
-async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
+// Where the alphaTab player is running:
+// - `standalone`: the plain guitareasy.app/mcp-app/ page, opened directly.
+// - `session`: the same page, opened by the host to play one score (audio
+//   fallback of the two framed modes below).
+// - `bridge`: the nested first-party frame inside a host's widget frame.
+// - `embedded`: the host's own widget frame, on hosts that block nesting.
+type PlayerMode = 'standalone' | 'session' | 'bridge' | 'embedded'
+
+type NativePlayerOptions = {
+  mode: PlayerMode
+  sessionId?: string
+  // Set in `embedded` mode: the live connection to the host, needed to ask
+  // it to open the audio player when the widget frame itself can't play.
+  hostApp?: App
+}
+
+// The handles a caller keeps on a running player: feeding it later scores
+// and reporting host-level problems in its own status line.
+type NativePlayer = {
+  loadScore: (score: ScorePayload) => void
+  setStatus: (text: string) => void
+}
+
+type AlphaTabModule = typeof import('@coderline/alphatab')
+
+// alphaTab synthesizes audio in a Web Worker it builds from a URL on the
+// origin its bundle came from. In `embedded` mode that origin is the host's
+// sandbox, not guitareasy.app, so every construction path alphaTab tries is
+// cross-origin and fails — and because it only fetches the soundfont once
+// the player reports ready, audio then stalls before the first byte.
+//
+// Workers must be same-origin, but their *source* need not be: fetch the
+// bundled worker over CORS and run it from a blob, which is same-origin to
+// this document. The built entry is self-contained (no imports, no exports),
+// so it loads as a classic worker and never needs a module graph.
+async function installSameOriginSynthWorker(alphaTab: AlphaTabModule): Promise<boolean> {
+  try {
+    const response = await fetch(alphaTabSynthWorkerUrl, { mode: 'cors' })
+    if (!response.ok) throw new Error(`Fetching the synth worker returned HTTP ${response.status}.`)
+    const blobUrl = URL.createObjectURL(new Blob([await response.text()], { type: 'text/javascript' }))
+    alphaTab.Environment.initializeMain(
+      () => new Worker(blobUrl),
+      // Only reached for the AudioWorklet output, which the framed modes
+      // never select; the ScriptProcessor output needs no worklet module.
+      () => Promise.reject(new Error('Audio worklets are not used in a host frame.')),
+    )
+    return true
+  } catch (error) {
+    console.warn('GuitarEasy: could not load the synth worker from a same-origin blob.', error)
+    return false
+  }
+}
+
+async function startNativePlayer(options: NativePlayerOptions): Promise<NativePlayer> {
+  const { mode, sessionId, hostApp } = options
+  // Both framed modes render inside a host-controlled sandbox, so they take
+  // the conservative audio path and the audio-fallback flow.
+  const isFramed = mode === 'bridge' || mode === 'embedded'
   const alphaTab = await import('@coderline/alphatab')
 
-  if (isBridgePlayer) document.documentElement.classList.add('is-bridge-player')
+  // Only the host's own frame has the cross-origin problem: the bridge frame
+  // and the standalone page are already served from guitareasy.app.
+  if (mode === 'embedded') await installSameOriginSynthWorker(alphaTab)
+
+  if (isFramed) document.documentElement.classList.add('is-framed-player')
 
   root.innerHTML = `
     <div class="player">
@@ -300,11 +424,10 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
   let hasScore = false
   let currentScore: ScorePayload | undefined
   // The nested bridge frame is a real guitareasy.app document, so it plays
-  // audio inline like the main site — no host sandbox restrictions apply to
-  // it the way they can to the outer widget frame. `audioBridgeFailed` is
-  // only set true if that inline playback genuinely can't start (a host
-  // whose nesting still blocks Web Audio), and only then do we fall back to
-  // asking the host to open the score as a first-party page.
+  // audio inline like the main site. The `embedded` frame is the host's own
+  // sandbox, which may or may not permit audio. `audioBridgeFailed` is only
+  // set true if inline playback genuinely can't start, and only then do we
+  // fall back to asking the host to open the score as a first-party page.
   let audioBridgeFailed = false
   let readinessTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -368,7 +491,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       // ordinary script/fetch works fine. The legacy ScriptProcessor path
       // has no such module-loading step, so the bridge frame uses it to
       // avoid depending on that being permitted.
-      outputMode: isBridgePlayer
+      outputMode: isFramed
         ? alphaTab.PlayerOutputMode.WebAudioScriptProcessor
         : alphaTab.PlayerOutputMode.WebAudioAudioWorklets,
       soundFont: `${PLAYER_ASSET_ORIGIN}/mcp-app/soundfont/sonivox.sf2`,
@@ -406,7 +529,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       }
     }, 8000)
   }
-  if (isBridgePlayer) scheduleReadinessTimeout()
+  if (isFramed) scheduleReadinessTimeout()
 
   api.renderStarted.on(() => setStatus('Rendering score…'))
   api.renderFinished.on(() => {
@@ -424,14 +547,14 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
   })
   api.error.on((error) => {
     setStatus(error.message || 'alphaTab could not render this score.')
-    if (isBridgePlayer && !isSynthReady) {
+    if (isFramed && !isSynthReady) {
       enterAudioFallbackMode('Audio isn’t available here — open the audio player to listen.')
     }
   })
   api.soundFontLoad.on((event) => {
     const percentage = event.total > 0 ? Math.floor((event.loaded / event.total) * 100) : 0
     setStatus(`Loading sound font… ${percentage}%`)
-    if (isBridgePlayer && !isSynthReady && !audioBridgeFailed) scheduleReadinessTimeout()
+    if (isFramed && !isSynthReady && !audioBridgeFailed) scheduleReadinessTimeout()
   })
   api.playerReady.on(() => {
     isSynthReady = true
@@ -453,16 +576,27 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
     progressFill.style.width = `${Math.min(100, Math.max(0, percentage))}%`
   })
 
-  function openFallbackPlayer() {
+  async function openFallbackPlayer() {
     const url = currentScore?.playbackUrl
     if (!url || !isTrustedPlaybackUrl(url)) return
     setStatus('Opening audio player…')
-    window.parent.postMessage({ type: OPEN_AUDIO_PLAYER_MESSAGE, url } satisfies OpenAudioPlayerMessage, '*')
+    // In `bridge` mode the outer widget frame holds the host connection, so
+    // ask it to do this. In `embedded` mode this frame holds it itself.
+    if (!hostApp) {
+      window.parent.postMessage({ type: OPEN_AUDIO_PLAYER_MESSAGE, url } satisfies OpenAudioPlayerMessage, '*')
+      return
+    }
+    try {
+      const result = await hostApp.openLink({ url })
+      if (result.isError) throw new Error('The host did not open the audio player.')
+    } catch (error) {
+      setStatus(errorMessage(error))
+    }
   }
 
   playPauseButton.addEventListener('click', () => {
     if (audioBridgeFailed) {
-      openFallbackPlayer()
+      void openFallbackPlayer()
       return
     }
     if (isSynthReady && hasScore) api.playPause()
@@ -477,7 +611,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
     if (event.code !== 'Space' || !hasScore) return
     event.preventDefault()
     if (audioBridgeFailed) {
-      openFallbackPlayer()
+      void openFallbackPlayer()
       return
     }
     if (!isSynthReady) return
@@ -500,7 +634,7 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
       `${PLAYER_ASSET_ORIGIN}/mcp-app/session/${encodeURIComponent(id)}`,
       { cache: 'no-store' },
     )
-    if (!response.ok) throw new Error('This audio player link has expired. Ask ChatGPT to open the score again.')
+    if (!response.ok) throw new Error('This audio player link has expired. Ask the assistant to open the score again.')
     const data = (await response.json()) as { name?: unknown; tex?: unknown }
     if (typeof data.name !== 'string' || typeof data.tex !== 'string') {
       throw new Error('The audio player received invalid score data.')
@@ -508,22 +642,27 @@ async function startNativePlayer(isBridgePlayer: boolean, sessionId?: string) {
     loadScore({ name: data.name, tex: data.tex })
   }
 
-  if (isBridgePlayer) {
+  if (mode === 'bridge') {
     window.addEventListener('message', (event) => {
       if (event.source !== window.parent || !isParentToPlayerMessage(event.data)) return
       if (event.data.type === LOAD_SCORE_MESSAGE) loadScore(event.data.score)
       else handleHostContextChanged(event.data.context)
     })
     window.parent.postMessage({ type: PLAYER_READY_MESSAGE } satisfies PlayerReadyMessage, '*')
-    return
+    return { loadScore, setStatus }
   }
 
-  if (sessionId) {
+  // Running in the host's own widget frame, on an already-connected host.
+  // The caller feeds it the pending score and re-routes later tool results.
+  if (mode === 'embedded') return { loadScore, setStatus }
+
+  if (mode === 'session' && sessionId) {
     await loadPlaybackSession(sessionId)
-    return
+    return { loadScore, setStatus }
   }
 
   connectToMcpHost(loadScore, () => undefined, setStatus)
+  return { loadScore, setStatus }
 }
 
 const searchParams = new URLSearchParams(window.location.search)
@@ -532,7 +671,8 @@ const sessionId = searchParams.get('session') ?? undefined
 const isEmbeddedMcpView = window !== window.parent
 
 if (isBridgePlayer || !isEmbeddedMcpView) {
-  startNativePlayer(isBridgePlayer, sessionId).catch((error: unknown) => {
+  const mode: PlayerMode = isBridgePlayer ? 'bridge' : sessionId ? 'session' : 'standalone'
+  startNativePlayer({ mode, sessionId }).catch((error: unknown) => {
     root.innerHTML = `<div class="empty-state">${errorMessage(error)}</div>`
   })
 } else {
