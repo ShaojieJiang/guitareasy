@@ -28,18 +28,45 @@ UI resource).
   Accounts, scores, ratings, and comments live in D1 (`migrations/`). Workers KV holds OAuth
   grants and short-lived playback sessions. The sign-in flow is ported from GatherEasy.
 - `app/` — a standalone Vite project that builds the alphaTab player UI shown inside the host's
-  iframe. Reuses the same `@coderline/alphatab-vite` plugin as the main GuitarEasy app. The widget
-  nests a second, first-party `guitareasy.app` frame (the "bridge") inside the host's own widget
-  frame and forwards the tool result into it; alphaTab renders and plays there, using the legacy
-  ScriptProcessor audio output (`PlayerOutputMode.WebAudioScriptProcessor`) instead of AudioWorklets,
-  since a worklet's separate module-loading step is more likely to be blocked by a host-inherited
-  CSP than ordinary script/fetch. This plays inline in the widget on hosts that allow it. If the
-  synth still never becomes ready within a few seconds (a host whose sandbox blocks audio even in
-  the nested frame), the widget falls back to asking the host to open the score as a first-party
-  `guitareasy.app` page instead, via a short-lived playback session URL. Assets are namespaced under
-  `/mcp-app/*` — deliberately not `/mcp/*`, which would collide with the JSON-RPC endpoint at
-  `/mcp`, or with the main app's own `/font/`, `/soundfont/`, and `/assets/` paths on the shared
-  domain.
+  iframe. Reuses the same `@coderline/alphatab-vite` plugin as the main GuitarEasy app. It renders
+  the same player in one of two places, because hosts differ in what they allow (see
+  [Host differences](#host-differences)):
+  - **Nested frame ("bridge")** — the widget nests a second, first-party `guitareasy.app` frame
+    inside the host's own widget frame and forwards the tool result into it. Because that frame is
+    a real `guitareasy.app` document, audio plays inline even on hosts whose widget frame is not
+    granted autoplay. Used on ChatGPT.
+  - **In the host's widget frame ("embedded")** — alphaTab runs directly in the widget frame, with
+    no nesting. Used on hosts that block nested frames, claude.ai among them.
+
+  The widget starts on the bridge and switches to the embedded player as soon as it sees the frame
+  blocked. A blocked frame fires no error event, so two other signals catch it, both immediate: the
+  host reporting a sandbox CSP that omits `guitareasy.app` from `frameDomains`, and a
+  `securitypolicyviolation` on `frame-src` — the frame is blocked by a policy on the widget's own
+  document, so that document is where the violation is reported. The latter covers hosts that don't
+  advertise their sandbox CSP at all. `BRIDGE_READY_TIMEOUT_MS` is only a backstop for a frame that
+  is neither ready nor visibly blocked, and is deliberately long: switching replaces the document
+  holding the frame, so it can't be undone, and abandoning a bridge that was merely slow to load
+  would cost inline audio on a host that does permit nesting.
+
+  In embedded mode the widget also replaces alphaTab's Web Worker factory
+  (`Environment.initializeMain`). alphaTab always synthesizes audio in a worker —
+  `core.useWorkers` only controls the *rendering* worker — and builds it from a URL on the origin
+  its own bundle came from, which in the host's frame is cross-origin and therefore rejected by the
+  browser whatever the host's CSP allows. Worse, alphaTab only fetches the soundfont once the
+  player reports ready, so a failed worker stalls audio before the first byte. `app/src/`
+  `alphatab-synth-worker.ts` is bundled as a standalone classic (IIFE) worker so the widget can
+  fetch it over CORS and run it from a same-origin blob instead.
+
+  Both framed modes use the legacy ScriptProcessor audio output
+  (`PlayerOutputMode.WebAudioScriptProcessor`) instead of AudioWorklets, since a worklet's separate
+  module-loading step is more likely to be blocked by a host-inherited CSP than ordinary
+  script/fetch. If the synth still never becomes ready within a few seconds (a host whose sandbox
+  blocks audio outright), the player falls back to asking the host to open the score as a
+  first-party `guitareasy.app` page, via a short-lived playback session URL.
+
+  Assets are namespaced under `/mcp-app/*` — deliberately not `/mcp/*`, which would collide with
+  the JSON-RPC endpoint at `/mcp`, or with the main app's own `/font/`, `/soundfont/`, and
+  `/assets/` paths on the shared domain.
 - `desktop-extension/` — a [Claude Desktop Extension](desktop-extension/README.md) (`.mcpb`) that
   bundles a local proxy pointed at the deployed server, for one-click install in Claude Desktop.
 
@@ -75,6 +102,27 @@ published scores.
 Scores uploaded to the old shared, anonymous library in KV can still be opened by id with
 `download_atex` and `play_atex`, but are read-only and no longer listed.
 
+## Host differences
+
+The player's UI resource declares its CSP needs in `_meta.ui.csp` (`resourceDomains`,
+`connectDomains`, `frameDomains`), all pointing at `https://guitareasy.app`. Hosts enforce those
+differently, which is why the widget has two rendering modes:
+
+| | ChatGPT | claude.ai / Claude Desktop |
+| --- | --- | --- |
+| `resourceDomains`, `connectDomains` | honoured | honoured |
+| `frameDomains` (nested iframes) | honoured | **dropped** — `frame-src 'self' blob: data:` is enforced instead ([ext-apps issue](https://github.com/anthropics/claude-ai-mcp/issues/40); Anthropic: nested iframes are not allowed "at the moment") |
+| Player renders in | the nested `guitareasy.app` frame | the host's widget frame |
+| alphaTab synth worker | same-origin URL in the nested frame | cross-origin, so fetched and run from a same-origin blob |
+| Inline audio | in the nested frame | in the widget frame, else the open-a-page fallback |
+
+`_meta.ui.domain` is deliberately **not** set. It names a *host-owned* sandbox origin in a
+host-specific format (`<hash>.claudemcpcontent.com` on Claude,
+`<name>.oaiusercontent.com` on ChatGPT), not the server's own origin. Setting it to
+`https://guitareasy.app` is meaningless to both, and the player assets are already served
+`Access-Control-Allow-Origin: *`, so no dedicated origin is needed. ChatGPT's own
+`openai/widgetDomain` alias is kept, since that field is read differently.
+
 ## Connect a host
 
 All hosts sign in with OAuth: when the connector is added, the host opens GuitarEasy's sign-in page
@@ -82,7 +130,8 @@ All hosts sign in with OAuth: when the connector is added, the host opens Guitar
 accounts existed must be reconnected once.
 
 **Claude.ai / Claude Desktop** — Settings → Connectors → Add custom connector → enter
-`https://guitareasy.app/mcp`. Renders the interactive player inline (MCP Apps support). For a
+`https://guitareasy.app/mcp`. Renders the interactive player inline (MCP Apps support), directly in
+the widget frame rather than a nested one — see [Host differences](#host-differences). For a
 one-click local install instead, use the [Desktop Extension](desktop-extension/README.md)
 (`.mcpb`) — install it from `mcp/desktop-extension/dist/guitareasy.mcpb` after building it there.
 

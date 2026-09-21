@@ -34,10 +34,18 @@ function playerResourceMeta(assetOrigin: string) {
   return {
     ui: {
       prefersBorder: true,
-      domain: assetOrigin,
+      // No `domain`: it names a host-owned sandbox origin in a host-specific
+      // format (`<hash>.claudemcpcontent.com` on Claude,
+      // `<name>.oaiusercontent.com` on ChatGPT), not the server's own origin,
+      // and the player assets are served `Access-Control-Allow-Origin: *`, so
+      // no stable origin is needed. ChatGPT keeps its own alias below.
       csp: {
         resourceDomains: [assetOrigin],
         connectDomains: [assetOrigin],
+        // Honoured by ChatGPT, which then runs the nested first-party player
+        // frame. claude.ai currently drops this and enforces
+        // `frame-src 'self' blob: data:`, so the widget detects the frame
+        // never loading and renders alphaTab in the host frame instead.
         frameDomains: [assetOrigin],
       },
     },

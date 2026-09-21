@@ -246,17 +246,17 @@ body {
   display: none;
 }
 
-html.is-bridge-player,
-html.is-bridge-player body,
-html.is-bridge-player #app {
+html.is-framed-player,
+html.is-framed-player body,
+html.is-framed-player #app {
   height: 640px;
 }
 
 @media (max-width: 560px) {
   .player-bridge,
-  html.is-bridge-player,
-  html.is-bridge-player body,
-  html.is-bridge-player #app {
+  html.is-framed-player,
+  html.is-framed-player body,
+  html.is-framed-player #app {
     height: 520px;
   }
 }
