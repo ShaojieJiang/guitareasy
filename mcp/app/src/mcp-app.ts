@@ -193,9 +193,12 @@ function isTrustedPlaybackUrl(value: string) {
   }
 }
 
-// How long to wait for the nested first-party frame to report itself ready
-// before giving up on it and rendering in the host's own widget frame.
-const BRIDGE_READY_TIMEOUT_MS = 2500
+// Last-resort deadline for a nested frame that neither reports itself ready
+// nor trips either blocked-frame signal below. Falling back is irreversible —
+// it replaces the document that holds the frame — so this has to outlast a
+// cold cache on a slow connection rather than race it; the two signals below
+// are what actually catch a blocked frame, and they are both instant.
+const BRIDGE_READY_TIMEOUT_MS = 15000
 
 // A host that blocks nested frames blocks them silently: the iframe fires no
 // error, it simply never loads. Read the CSP the host says it applied, when
@@ -206,7 +209,23 @@ function hostAllowsNestedPlayerFrame(app: App): boolean | undefined {
   return (csp.frameDomains ?? []).some((domain) => domain.replace(/\/$/, '') === PLAYER_ASSET_ORIGIN)
 }
 
+// The other instant signal, and the one that covers hosts which don't report
+// their sandbox CSP at all: the frame is blocked by a policy on *this*
+// document, so this document is where the violation is reported.
+function isBlockedPlayerFrameViolation(event: SecurityPolicyViolationEvent) {
+  const directive = event.effectiveDirective || event.violatedDirective
+  return (
+    event.disposition !== 'report' &&
+    directive.startsWith('frame-src') &&
+    (event.blockedURI === PLAYER_ASSET_ORIGIN || event.blockedURI.startsWith(`${PLAYER_ASSET_ORIGIN}/`))
+  )
+}
+
 function startSandboxBridge() {
+  // Registered before the frame exists, so a policy that blocks it on sight
+  // is still caught. (Hoisted; it only runs once the frame has been tried.)
+  document.addEventListener('securitypolicyviolation', onCspViolation)
+
   root.innerHTML = `
     <div class="player-bridge">
       <iframe
@@ -229,6 +248,20 @@ function startSandboxBridge() {
   let isFallingBack = false
   let readyTimer: ReturnType<typeof setTimeout> | undefined
 
+  function onCspViolation(event: SecurityPolicyViolationEvent) {
+    if (isBlockedPlayerFrameViolation(event)) {
+      void renderInHostFrame('This host blocked the nested player frame.')
+    }
+  }
+
+  function stopWatchingForBlockedFrame() {
+    if (readyTimer !== undefined) {
+      clearTimeout(readyTimer)
+      readyTimer = undefined
+    }
+    document.removeEventListener('securitypolicyviolation', onCspViolation)
+  }
+
   function postToPlayer(message: ParentToPlayerMessage) {
     frame.contentWindow?.postMessage(message, PLAYER_ASSET_ORIGIN)
   }
@@ -247,7 +280,7 @@ function startSandboxBridge() {
   async function renderInHostFrame(reason: string) {
     if (isFallingBack) return
     isFallingBack = true
-    if (readyTimer !== undefined) clearTimeout(readyTimer)
+    stopWatchingForBlockedFrame()
     console.warn(`GuitarEasy: ${reason} Rendering the player in the host's frame instead.`)
     try {
       framePlayer = await startNativePlayer({ mode: 'embedded', hostApp })
@@ -264,7 +297,7 @@ function startSandboxBridge() {
     if (isPlayerReadyMessage(event.data)) {
       if (isFallingBack) return
       isBridgeReady = true
-      if (readyTimer !== undefined) clearTimeout(readyTimer)
+      stopWatchingForBlockedFrame()
       bridgeStatus.hidden = true
       flushPendingMessages()
       return
@@ -316,8 +349,9 @@ function startSandboxBridge() {
     },
   )
 
-  // Whatever the host advertises, a frame that never reports ready is a
-  // frame that isn't going to load.
+  // Backstop for a frame that is neither ready nor visibly blocked: a host
+  // that permits nesting but whose frame is merely slow keeps its bridge, and
+  // with it inline audio, for as long as this deadline allows.
   readyTimer = setTimeout(() => {
     if (!isBridgeReady) void renderInHostFrame('The nested player frame did not load in time.')
   }, BRIDGE_READY_TIMEOUT_MS)

@@ -38,10 +38,15 @@ UI resource).
   - **In the host's widget frame ("embedded")** — alphaTab runs directly in the widget frame, with
     no nesting. Used on hosts that block nested frames, claude.ai among them.
 
-  The widget starts on the bridge and switches to the embedded player when the host says it did not
-  approve `frameDomains`, or when the nested frame has not reported itself ready within
-  `BRIDGE_READY_TIMEOUT_MS`. A blocked frame fires no error event, so the timeout is what actually
-  catches it.
+  The widget starts on the bridge and switches to the embedded player as soon as it sees the frame
+  blocked. A blocked frame fires no error event, so two other signals catch it, both immediate: the
+  host reporting a sandbox CSP that omits `guitareasy.app` from `frameDomains`, and a
+  `securitypolicyviolation` on `frame-src` — the frame is blocked by a policy on the widget's own
+  document, so that document is where the violation is reported. The latter covers hosts that don't
+  advertise their sandbox CSP at all. `BRIDGE_READY_TIMEOUT_MS` is only a backstop for a frame that
+  is neither ready nor visibly blocked, and is deliberately long: switching replaces the document
+  holding the frame, so it can't be undone, and abandoning a bridge that was merely slow to load
+  would cost inline audio on a host that does permit nesting.
 
   In embedded mode the widget also replaces alphaTab's Web Worker factory
   (`Environment.initializeMain`). alphaTab always synthesizes audio in a worker —
